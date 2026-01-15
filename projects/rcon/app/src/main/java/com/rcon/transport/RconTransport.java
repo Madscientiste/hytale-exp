@@ -15,48 +15,49 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Main transport layer - handles TCP server and connection management.
- * 1 main thread accepts connections + 1 thread per connection handles that client.
+ * 1 main thread accepts connections + 1 thread per connection handles that
+ * client.
  */
 public class RconTransport {
-    
+
     private final RconConfig config;
     private final RconLogger logger;
     private TransportCallbacks callbacks;
     private RconProtocol protocol;
-    
+
     private ServerSocket serverSocket;
     private final ConcurrentHashMap<String, RconConnection> connections = new ConcurrentHashMap<>();
     private final AtomicInteger connectionCounter = new AtomicInteger(0);
     private final AtomicBoolean running = new AtomicBoolean(false);
-    
+
     private Thread acceptThread;
-    
+
     public RconTransport(RconConfig config, RconLogger logger, TransportCallbacks callbacks) {
         this.config = config;
         this.logger = logger;
         this.callbacks = callbacks;
         this.protocol = new RconProtocol(logger);
     }
-    
+
     /**
      * Start the TCP server and begin accepting connections.
      */
     public void start() throws Exception {
         if (running.compareAndSet(false, true)) {
             serverSocket = new ServerSocket(config.getPort(), 50, InetAddress.getByName(config.getHost()));
-            
+
             // Configure server socket
             serverSocket.setSoTimeout(config.getConnectionTimeoutMs());
             serverSocket.setReuseAddress(true);
-            
+
             acceptThread = new Thread(this::acceptLoop, "RconAccept");
             acceptThread.setDaemon(true);
             acceptThread.start();
-            
+
             logger.logServerStarted(config.getHost(), config.getPort());
         }
     }
-    
+
     /**
      * Stop the TCP server and close all connections.
      */
@@ -67,25 +68,25 @@ public class RconTransport {
                 if (serverSocket != null) {
                     serverSocket.close();
                 }
-                
+
                 // Close all existing connections
                 connections.forEach((id, conn) -> conn.close("Server shutdown"));
                 connections.clear();
-                
+
                 // Wait for accept thread to finish
                 if (acceptThread != null) {
                     acceptThread.interrupt();
                     acceptThread.join(1000);
                 }
-                
+
                 logger.logServerStopped();
-                
+
             } catch (Exception e) {
                 logger.logError("Error stopping transport", e);
             }
         }
     }
-    
+
     /**
      * Send data to a specific connection.
      */
@@ -94,41 +95,52 @@ public class RconTransport {
         if (connection == null) {
             throw new Exception("Connection not found: " + connectionId);
         }
-        
+
         connection.send(data);
     }
-    
+
     /**
      * Close a specific connection.
      */
     public void closeConnection(String connectionId, String reason) {
-        RconConnection connection = connections.get(connectionId);
+        RconConnection connection = connections.remove(connectionId);
         if (connection != null) {
             connection.close(reason);
         }
     }
-    
+
+    /**
+     * Handle connection closed callback - remove from map.
+     * Called by RconConnection when it closes.
+     */
+    public void onConnectionClosed(String connectionId, String reason) {
+        connections.remove(connectionId);
+        if (callbacks != null) {
+            callbacks.onConnectionClosed(connectionId, reason);
+        }
+    }
+
     /**
      * Set callbacks (for delayed initialization).
      */
     public void setCallbacks(TransportCallbacks callbacks) {
         this.callbacks = callbacks;
     }
-    
+
     /**
      * Get number of active connections.
      */
     public int getConnectionCount() {
         return connections.size();
     }
-    
+
     /**
      * Check if a new connection can be accepted (connection limit).
      */
     public boolean canAcceptConnection() {
         return connections.size() < config.getMaxConnections();
     }
-    
+
     /**
      * Main accept loop - runs in dedicated thread.
      */
@@ -136,27 +148,27 @@ public class RconTransport {
         while (running.get() && !Thread.currentThread().isInterrupted()) {
             try {
                 Socket clientSocket = serverSocket.accept();
-                
+
                 if (!canAcceptConnection()) {
                     clientSocket.close();
                     logger.logError("Connection rejected: maximum connections reached");
                     continue;
                 }
-                
+
                 // Configure client socket
                 clientSocket.setSoTimeout(config.getReadTimeoutMs());
                 clientSocket.setTcpNoDelay(true);
-                
-                // Create connection
+
+                // Create connection with transport reference for cleanup
                 String connectionId = generateConnectionId();
-                RconConnection connection = new RconConnection(connectionId, clientSocket, callbacks);
-                
+                RconConnection connection = new RconConnection(connectionId, clientSocket, callbacks, this);
+
                 // Track connection
                 connections.put(connectionId, connection);
                 connection.start();
-                
+
                 logger.logConnectionAccepted(connectionId, clientSocket.getInetAddress());
-                
+
             } catch (java.net.SocketTimeoutException e) {
                 // Timeout is expected - allows checking running flag periodically
                 // Don't log as error, just continue the loop
@@ -169,30 +181,28 @@ public class RconTransport {
             }
         }
     }
-    
 
-    
     /**
      * Generate unique connection ID.
      */
     private String generateConnectionId() {
         return "conn-" + connectionCounter.incrementAndGet() + "-" + System.currentTimeMillis();
     }
-    
+
     /**
      * Handle bytes received from connection.
      */
     public void onBytesReceived(String connectionId, byte[] data) {
         // Parse bytes using protocol layer
         RconProtocol.ProtocolResult result = protocol.parseBytes(connectionId, data);
-        
+
         if (result instanceof RconProtocol.ProtocolSuccess success) {
             handlePackets(connectionId, success.getPackets());
         } else if (result instanceof RconProtocol.ProtocolError error) {
             handleProtocolError(connectionId, error.getErrorMessage());
         }
     }
-    
+
     /**
      * Handle packets successfully parsed - delegate to application layer.
      */
@@ -201,7 +211,7 @@ public class RconTransport {
             callbacks.onBytesReceived(connectionId, serializePackets(packets));
         }
     }
-    
+
     /**
      * Handle protocol errors.
      */
@@ -209,7 +219,7 @@ public class RconTransport {
         logger.logProtocolViolation(connectionId, error);
         closeConnection(connectionId, "Protocol error");
     }
-    
+
     /**
      * Serialize packets back to bytes for application layer.
      */
@@ -225,16 +235,14 @@ public class RconTransport {
             return new byte[0];
         }
     }
-    
-    
-    
+
     /**
      * Check for idle connections and close them.
      */
     public void cleanupIdleConnections() {
         long now = System.currentTimeMillis();
         long idleTimeout = config.getReadTimeoutMs();
-        
+
         connections.forEach((id, conn) -> {
             if (!conn.isClosed() && (now - conn.getLastActivity()) > idleTimeout) {
                 conn.close("Idle timeout");

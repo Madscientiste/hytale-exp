@@ -82,15 +82,23 @@ public class RconPacket {
         int id = readIntLittleEndian(data, 4);
         int type = readIntLittleEndian(data, 8);
 
-        // Read body up to null terminator
-        StringBuilder body = new StringBuilder();
-        for (int i = 12; i < data.length - 1; i++) {
-            if (data[i] == 0)
+        // Find null terminator to determine body length
+        int bodyStart = 12;
+        int bodyEnd = bodyStart;
+        for (int i = bodyStart; i < data.length - 1; i++) {
+            if (data[i] == 0) {
+                bodyEnd = i;
                 break;
-            body.append((char) data[i]);
+            }
         }
 
-        return new RconPacket(id, type, body.toString());
+        // Extract body bytes and decode as UTF-8
+        int bodyLength = bodyEnd - bodyStart;
+        byte[] bodyBytes = new byte[bodyLength];
+        System.arraycopy(data, bodyStart, bodyBytes, 0, bodyLength);
+        String body = new String(bodyBytes, java.nio.charset.StandardCharsets.UTF_8);
+
+        return new RconPacket(id, type, body);
     }
 
     private static void writeIntLittleEndian(byte[] buffer, int offset, int value) {

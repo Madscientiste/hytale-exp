@@ -73,6 +73,7 @@ local.properties
 .server/mods/*.jar
 .server/mods/Hytale_Shop
 
+.server/dumps/
 .server/universe/
 .server/logs/
 .server/*.log
