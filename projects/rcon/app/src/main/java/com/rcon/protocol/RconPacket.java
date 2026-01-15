@@ -10,106 +10,122 @@ public class RconPacket {
     public static final int SERVERDATA_AUTH_RESPONSE = 2;
     public static final int SERVERDATA_EXECCOMMAND = 2;
     public static final int SERVERDATA_RESPONSE_VALUE = 0;
-    
+
     private final int id;
     private final int type;
     private final String body;
-    
+
     public RconPacket(int id, int type, String body) {
         this.id = id;
         this.type = type;
         this.body = body != null ? body : "";
     }
-    
+
     public int getId() {
         return id;
     }
-    
+
     public int getType() {
         return type;
     }
-    
+
     public String getBody() {
         return body;
     }
-    
+
     /**
      * Serializes packet to little-endian byte array (RCON protocol format).
-     * Format: 4-byte size + 4-byte id + 4-byte type + body + null terminator
+     * Format per Source RCON standard:
+     * - 4-byte size (value = id + type + body + body_null + padding_null)
+     * - 4-byte id
+     * - 4-byte type
+     * - body bytes
+     * - 1-byte body null terminator
+     * - 1-byte empty string padding (second null)
+     * 
+     * Man this makes my head hurt; it is so simple
      */
     public byte[] toBytes() {
         byte[] bodyBytes = body.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        int totalSize = 4 + 4 + 4 + bodyBytes.length + 1; // size + id + type + body + null terminator
-        
-        byte[] result = new byte[4 + totalSize]; // Include size prefix
-        writeIntLittleEndian(result, 0, totalSize);
+        // Size field value = id + type + body + body_null + padding_null
+        int packetSize = 4 + 4 + bodyBytes.length + 1 + 1; // id + type + body + body_null + padding_null
+
+        // Total packet = size field (4) + packet content
+        byte[] result = new byte[4 + packetSize];
+        writeIntLittleEndian(result, 0, packetSize); // Size field
         writeIntLittleEndian(result, 4, id);
         writeIntLittleEndian(result, 8, type);
         System.arraycopy(bodyBytes, 0, result, 12, bodyBytes.length);
-        result[12 + bodyBytes.length] = 0; // Null terminator
-        
+        result[12 + bodyBytes.length] = 0; // Body null terminator
+        result[12 + bodyBytes.length + 1] = 0; // Empty string padding (second null)
+
         return result;
     }
-    
+
     /**
      * Deserializes packet from little-endian byte array.
      * Input should be the complete packet including size prefix.
      */
     public static RconPacket fromBytes(byte[] data) throws ProtocolException {
-        if (data.length < 14) { // Minimum packet size
+        // RCON standard minimum: 4 (size) + 4 (id) + 4 (type) + 0 (body) + 1
+        // (body_null) + 1 (padding_null) = 14 bytes
+        if (data.length < 14) {
             throw new ProtocolException("Packet too short");
         }
-        
+
         int declaredSize = readIntLittleEndian(data, 0);
         if (declaredSize != data.length - 4) {
-            throw new ProtocolException("Size mismatch: declared=" + declaredSize + 
-                                       ", actual=" + (data.length - 4));
+            throw new ProtocolException("Size mismatch: declared=" + declaredSize +
+                    ", actual=" + (data.length - 4));
         }
-        
+
         int id = readIntLittleEndian(data, 4);
         int type = readIntLittleEndian(data, 8);
-        
+
         // Read body up to null terminator
         StringBuilder body = new StringBuilder();
         for (int i = 12; i < data.length - 1; i++) {
-            if (data[i] == 0) break;
+            if (data[i] == 0)
+                break;
             body.append((char) data[i]);
         }
-        
+
         return new RconPacket(id, type, body.toString());
     }
-    
+
     private static void writeIntLittleEndian(byte[] buffer, int offset, int value) {
         buffer[offset] = (byte) (value & 0xFF);
         buffer[offset + 1] = (byte) ((value >> 8) & 0xFF);
         buffer[offset + 2] = (byte) ((value >> 16) & 0xFF);
         buffer[offset + 3] = (byte) ((value >> 24) & 0xFF);
     }
-    
+
     private static int readIntLittleEndian(byte[] buffer, int offset) {
         return (buffer[offset] & 0xFF) |
-               ((buffer[offset + 1] & 0xFF) << 8) |
-               ((buffer[offset + 2] & 0xFF) << 16) |
-               ((buffer[offset + 3] & 0xFF) << 24);
+                ((buffer[offset + 1] & 0xFF) << 8) |
+                ((buffer[offset + 2] & 0xFF) << 16) |
+                ((buffer[offset + 3] & 0xFF) << 24);
     }
-    
+
     @Override
     public String toString() {
-        return "RconPacket{id=" + id + ", type=" + type + 
-               ", body='" + body + "'}";
+        return "RconPacket{id=" + id + ", type=" + type +
+                ", body='" + body + "'}";
     }
-    
+
     @Override
     public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        
+        if (this == o)
+            return true;
+        if (o == null || getClass() != o.getClass())
+            return false;
+
         RconPacket that = (RconPacket) o;
-        return id == that.id && 
-               type == that.type && 
-               body.equals(that.body);
+        return id == that.id &&
+                type == that.type &&
+                body.equals(that.body);
     }
-    
+
     @Override
     public int hashCode() {
         return 31 * (31 * id + type) + body.hashCode();
