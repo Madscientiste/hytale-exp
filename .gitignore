@@ -86,3 +86,5 @@ local.properties
 # Decompiled Hytale Server files
 .decompiled/
 
+# explicitly allow
+!.server/mods/Rcon-1.0.0.jar
