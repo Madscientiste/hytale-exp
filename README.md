@@ -69,5 +69,5 @@ Once configured, you can connect to the RCON server using any RCON-compatible cl
 > **Security Recommendations:**
 > - Keep the `host` set to `127.0.0.1` (localhost) for local-only access
 > - If you need to expose RCON over the network, **IP whitelisting via firewall is highly recommended** - configure your firewall to only allow connections from trusted IP addresses
-> - Authentication support will be added in a future release (this is the first release)
+> - Authentication support will be added in a future release, very soon (this is the first release)
 
