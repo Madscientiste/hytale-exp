@@ -37,8 +37,8 @@ public class RconPlugin extends JavaPlugin {
         instance = this;
         getLogger().at(Level.INFO).log("RCON plugin setting up...");
 
-        // Initialize configuration
-        RconConfig config = new RconConfig();
+        // Initialize configuration from server config.json
+        RconConfig config = com.rcon.infrastructure.RconConfigLoader.load();
         rconServer = new RconServer(config);
 
         getLogger().at(Level.INFO).log("RCON plugin setup complete!");
@@ -50,13 +50,11 @@ public class RconPlugin extends JavaPlugin {
             rconServer.start();
             RconConfig config = rconServer.getConfig();
             getLogger().at(Level.INFO).log(
-                String.format("RCON server started on %s:%d", 
-                    config.getHost(), config.getPort())
-            );
+                    String.format("RCON server started on %s:%d",
+                            config.getHost(), config.getPort()));
         } catch (Exception e) {
             getLogger().at(Level.SEVERE).log(
-                "Failed to start RCON server: " + e.getMessage()
-            );
+                    "Failed to start RCON server: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -69,14 +67,13 @@ public class RconPlugin extends JavaPlugin {
                 getLogger().at(Level.INFO).log("RCON server stopped");
             } catch (Exception e) {
                 getLogger().at(Level.WARNING).log(
-                    "Error stopping RCON server: " + e.getMessage()
-                );
+                        "Error stopping RCON server: " + e.getMessage());
             }
         }
-        
+
         // Clear instance to prevent stale references after reload
         instance = null;
-        
+
         getLogger().at(Level.INFO).log("RCON plugin shutdown complete");
     }
 
@@ -90,4 +87,3 @@ public class RconPlugin extends JavaPlugin {
         return rconServer;
     }
 }
-

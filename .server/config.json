@@ -20,7 +20,16 @@
     }
   },
   "LogLevels": {},
-  "Mods": {},
+  "Mods": {
+    "com.rcon:Rcon": {
+      "host": "127.0.0.1",
+      "port": 25575,
+      "maxConnections": 10,
+      "maxFrameSize": 4096,
+      "readTimeoutMs": 30000,
+      "connectionTimeoutMs": 5000
+    }
+  },
   "DisplayTmpTagsInStrings": false,
   "PlayerStorage": {
     "Type": "Hytale"
