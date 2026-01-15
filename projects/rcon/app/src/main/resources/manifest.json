@@ -1,0 +1,18 @@
+{
+    "Group": "com.rcon",
+    "Name": "Rcon",
+    "Version": "1.0.0",
+    "Description": "RCON (Remote Console) plugin for Hytale server",
+    "Authors": [
+        {
+            "Name": "Hytale Mod Exp"
+        }
+    ],
+    "Main": "com.rcon.RconPlugin",
+    "ServerVersion": "*",
+    "Dependencies": {},
+    "OptionalDependencies": {},
+    "DisabledByDefault": false,
+    "IncludesAssetPack": false,
+    "SubPlugins": []
+}

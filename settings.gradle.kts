@@ -5,6 +5,8 @@ plugins {
 
 rootProject.name = "hytale-mod-exp"
 include("playground")
+include("rcon")
 
 // All modules are in the projects/ directory (monorepo structure)
 project(":playground").projectDir = file("projects/playground")
+project(":rcon").projectDir = file("projects/rcon")

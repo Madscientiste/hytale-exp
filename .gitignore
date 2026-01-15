@@ -68,3 +68,20 @@ local.properties
 **/generated/
 **/build/generated/
 
+# Server runtime files
+# I want to keep the mod folder; but leaving it empty
+.server/mods/*.jar
+.server/mods/Hytale_Shop
+
+.server/universe/
+.server/logs/
+.server/*.log
+.server/auth.enc
+.server/bans.json
+.server/whitelist.json
+.server/permissions.json
+
+
+# Decompiled Hytale Server files
+.decompiled/
+
