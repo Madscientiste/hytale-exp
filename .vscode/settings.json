@@ -1,0 +1,84 @@
+{
+  // Java Configuration
+  "java.configuration.updateBuildConfiguration": "automatic",
+  "java.compile.nullAnalysis.mode": "automatic",
+  "java.configuration.runtimes": [],
+  "java.jdt.ls.java.home": null,
+  
+  // Gradle Configuration
+  "java.import.gradle.enabled": true,
+  "java.import.gradle.wrapper.enabled": true,
+  "java.import.gradle.version": null,
+  "java.import.gradle.home": null,
+  "java.import.gradle.java.home": null,
+  "gradle.nestedProjects": true,
+  
+  // Project Structure
+  "java.project.sourcePaths": [
+    "projects/*/app/src/main/java",
+    "projects/*/src/main/java"
+  ],
+  "java.project.outputPath": "projects/*/build/classes",
+  "java.project.referencedLibraries": [
+    "libs/**/*.jar"
+  ],
+  
+  // File Associations
+  "files.associations": {
+    "*.gradle.kts": "kotlin",
+    "*.kts": "kotlin"
+  },
+  
+  // Exclude build directories from search
+  "search.exclude": {
+    "**/build": true,
+    "**/.gradle": true,
+    "**/build/**": true,
+    "**/.gradle/**": true,
+    "**/node_modules": true
+  },
+  
+  // File Watcher Exclusions
+  "files.watcherExclude": {
+    "**/build/**": true,
+    "**/.gradle/**": true,
+    "**/build/classes/**": true,
+    "**/build/generated/**": true,
+    "**/build/tmp/**": true
+  },
+  
+  // Editor Settings
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": "explicit"
+  },
+  
+  // Java Formatting
+  "java.format.settings.url": null,
+  "java.format.settings.profile": null,
+  "java.format.enabled": true,
+  
+  // Kotlin Formatting (for build.gradle.kts files)
+  "[kotlin]": {
+    "editor.defaultFormatter": "fwcd.kotlin",
+    "editor.formatOnSave": true
+  },
+  
+  // Java-specific
+  "[java]": {
+    "editor.defaultFormatter": "redhat.java",
+    "editor.formatOnSave": true,
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true
+  },
+  
+  // Test Configuration
+  "java.test.config": {
+    "workingDirectory": "${workspaceFolder}"
+  },
+  
+  // Gradle Tasks
+  "gradle.autoDetect": "on",
+  "gradle.nestedProjects": true
+}
+

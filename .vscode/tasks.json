@@ -1,0 +1,93 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "gradle: build",
+      "type": "shell",
+      "command": "./gradlew",
+      "args": ["build"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": "$gradle"
+    },
+    {
+      "label": "gradle: clean",
+      "type": "shell",
+      "command": "./gradlew",
+      "args": ["clean"],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": "$gradle"
+    },
+    {
+      "label": "gradle: clean build",
+      "type": "shell",
+      "command": "./gradlew",
+      "args": ["clean", "build"],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": "$gradle"
+    },
+    {
+      "label": "gradle: test",
+      "type": "shell",
+      "command": "./gradlew",
+      "args": ["test"],
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": "$gradle"
+    },
+    {
+      "label": "gradle: playground:build",
+      "type": "shell",
+      "command": "./gradlew",
+      "args": [":playground:build"],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": "$gradle"
+    },
+    {
+      "label": "gradle: playground:test",
+      "type": "shell",
+      "command": "./gradlew",
+      "args": [":playground:test"],
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": "$gradle"
+    },
+    {
+      "label": "gradle: tasks",
+      "type": "shell",
+      "command": "./gradlew",
+      "args": ["tasks", "--all"],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": "$gradle"
+    }
+  ]
+}
+

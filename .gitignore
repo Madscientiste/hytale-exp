@@ -1,0 +1,70 @@
+# Build outputs
+build/
+.gradle/
+**/build/
+**/.gradle/
+bin/
+out/
+target/
+**/bin/
+**/out/
+**/target/
+
+# IDE
+.idea/
+*.iml
+# Keep .vscode/ for workspace settings
+# .vscode/
+.settings/
+.classpath
+.project
+.metadata/
+.factorypath
+.loadpath
+.recommenders/
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+*.bak
+*.orig
+
+# Java
+*.class
+*.log
+*.jar
+!gradle/wrapper/*.jar
+
+# Hytale Server files (download from official portal)
+libs/HytaleServer.*
+libs/Assets.zip
+libs/Assets.*
+**/HytaleServer.*
+**/Assets.zip
+**/Assets.*
+
+# Gradle
+.gradle/
+gradle-app.setting
+local.properties
+# Keep Gradle wrapper files
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
+# Test results
+**/test-results/
+**/reports/
+**/coverage/
+
+# Temporary files
+**/tmp/
+**/*.tmp
+*.tmp
+
+# Generated files
+**/generated/
+**/build/generated/
+

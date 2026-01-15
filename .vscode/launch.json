@@ -1,0 +1,28 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "java",
+      "name": "Debug Current Java File",
+      "request": "launch",
+      "mainClass": "${file}"
+    },
+    {
+      "type": "java",
+      "name": "Debug Playground Plugin",
+      "request": "launch",
+      "mainClass": "com.playground.Playground",
+      "projectName": "playground",
+      "args": "",
+      "vmArgs": ""
+    },
+    {
+      "type": "java",
+      "name": "Run Current Test",
+      "request": "launch",
+      "mainClass": "${file}",
+      "projectName": "playground"
+    }
+  ]
+}
+
