@@ -33,10 +33,15 @@ tasks.register<JavaExec>("hashPassword") {
     group = "rcon"
     description = "Generate a password hash for RCON authentication"
     classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("com.rcon.infrastructure.AuthenticationService")
+    mainClass.set("com.madscientiste.rcon.infrastructure.AuthenticationService")
     
     if (project.hasProperty("password")) {
-        args(project.property("password"))
+        val password = project.property("password") as? String
+        if (password != null) {
+            args(password)
+        } else {
+            println("Error: password property is null")
+        }
     } else {
         println("Usage: ./gradlew :rcon:hashPassword -Ppassword=your_password_here")
     }
