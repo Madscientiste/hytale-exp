@@ -50,6 +50,12 @@ public class RconProtocol {
                     return new ProtocolError("Invalid packet size: " + packetSize);
                 }
 
+                // Check for integer overflow before arithmetic
+                // If offset + HEADER_SIZE + packetSize would overflow, reject
+                if (offset > Integer.MAX_VALUE - HEADER_SIZE - packetSize) {
+                    return new ProtocolError("Invalid packet size or overflow");
+                }
+
                 // Check if we have enough data for complete packet
                 if (offset + HEADER_SIZE + packetSize > data.length) {
                     return new ProtocolError("Incomplete packet: need " + (offset + HEADER_SIZE + packetSize) +

@@ -1,12 +1,12 @@
 package com.rcon.transport;
 
-import com.rcon.infrastructure.RconLogger;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
+
+import com.rcon.protocol.RconProtocol;
 
 /**
  * Represents a single client connection.
@@ -25,6 +25,11 @@ public class RconConnection {
     private final Thread readThread;
 
     private volatile long lastActivity = System.currentTimeMillis();
+
+    // Buffer for accumulating partial packets (TCP fragmentation handling)
+    private final java.io.ByteArrayOutputStream readBuffer = new java.io.ByteArrayOutputStream();
+    private static final int HEADER_SIZE = 4;
+    private static final int MAX_BUFFER_SIZE = RconProtocol.MAX_FRAME_SIZE * 2; // Allow some headroom
 
     public RconConnection(String id, Socket socket, TransportCallbacks callbacks, RconTransport transport)
             throws Exception {
@@ -49,6 +54,7 @@ public class RconConnection {
 
     /**
      * Main read loop - reads bytes from socket and calls callbacks.
+     * Handles TCP fragmentation by buffering partial packets.
      */
     private void readLoop() {
         try {
@@ -65,11 +71,19 @@ public class RconConnection {
                 if (bytesRead > 0) {
                     updateActivity();
 
-                    // Copy to bytes we actually read
-                    byte[] data = new byte[bytesRead];
-                    System.arraycopy(buffer, 0, data, 0, bytesRead);
+                    // Add to read buffer
+                    synchronized (readBuffer) {
+                        // Prevent buffer from growing unbounded
+                        if (readBuffer.size() + bytesRead > MAX_BUFFER_SIZE) {
+                            close("Read buffer overflow");
+                            return;
+                        }
 
-                    callbacks.onBytesReceived(id, data);
+                        readBuffer.write(buffer, 0, bytesRead);
+
+                        // Process complete packets from buffer
+                        processCompletePackets();
+                    }
                 }
             }
 
@@ -78,6 +92,78 @@ public class RconConnection {
                 close("Read error: " + e.getMessage());
             }
         }
+    }
+
+    /**
+     * Process complete packets from the read buffer.
+     * Extracts length-prefixed packets and passes them to callbacks.
+     */
+    private void processCompletePackets() {
+        byte[] bufferData = readBuffer.toByteArray();
+        int offset = 0;
+
+        while (offset < bufferData.length) {
+            // Need at least HEADER_SIZE to read packet length
+            if (bufferData.length - offset < HEADER_SIZE) {
+                break; // Not enough data for header
+            }
+
+            // Read packet size (little-endian)
+            int packetSize = readIntLittleEndian(bufferData, offset);
+
+            // Validate packet size
+            if (packetSize < 10 || packetSize > RconProtocol.MAX_FRAME_SIZE) {
+                close("Invalid packet size: " + packetSize);
+                return;
+            }
+
+            // Check for integer overflow
+            if (offset > Integer.MAX_VALUE - HEADER_SIZE - packetSize) {
+                close("Packet size overflow");
+                return;
+            }
+
+            int totalPacketSize = HEADER_SIZE + packetSize;
+
+            // Check if we have complete packet
+            if (bufferData.length - offset < totalPacketSize) {
+                break; // Not enough data for complete packet
+            }
+
+            // Extract complete packet
+            byte[] packetData = new byte[totalPacketSize];
+            System.arraycopy(bufferData, offset, packetData, 0, totalPacketSize);
+
+            // Remove processed data from buffer
+            byte[] remaining = new byte[bufferData.length - offset - totalPacketSize];
+            if (remaining.length > 0) {
+                System.arraycopy(bufferData, offset + totalPacketSize, remaining, 0, remaining.length);
+            }
+            readBuffer.reset();
+            if (remaining.length > 0) {
+                readBuffer.write(remaining, 0, remaining.length);
+            }
+
+            // Process packet
+            callbacks.onBytesReceived(id, packetData);
+
+            // Update offset for next iteration
+            offset += totalPacketSize;
+
+            // Reset offset since we've consumed the data
+            bufferData = readBuffer.toByteArray();
+            offset = 0;
+        }
+    }
+
+    /**
+     * Read little-endian integer from buffer.
+     */
+    private int readIntLittleEndian(byte[] buffer, int offset) {
+        return (buffer[offset] & 0xFF) |
+                ((buffer[offset + 1] & 0xFF) << 8) |
+                ((buffer[offset + 2] & 0xFF) << 16) |
+                ((buffer[offset + 3] & 0xFF) << 24);
     }
 
     /**

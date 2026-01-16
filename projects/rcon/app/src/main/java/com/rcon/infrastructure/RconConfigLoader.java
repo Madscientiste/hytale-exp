@@ -47,8 +47,9 @@ public class RconConfigLoader {
             int maxFrameSize = getInt(rconConfig, "maxFrameSize", 4096);
             int readTimeoutMs = getInt(rconConfig, "readTimeoutMs", 30000);
             int connectionTimeoutMs = getInt(rconConfig, "connectionTimeoutMs", 5000);
+            String passwordHash = getString(rconConfig, "passwordHash", null);
 
-            return new RconConfig(host, port, maxConnections, maxFrameSize, readTimeoutMs, connectionTimeoutMs);
+            return new RconConfig(host, port, maxConnections, maxFrameSize, readTimeoutMs, connectionTimeoutMs, passwordHash);
 
         } catch (Exception e) {
             // Log error but return defaults

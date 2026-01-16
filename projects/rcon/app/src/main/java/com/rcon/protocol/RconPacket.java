@@ -82,18 +82,29 @@ public class RconPacket {
         int id = readIntLittleEndian(data, 4);
         int type = readIntLittleEndian(data, 8);
 
-        // Find null terminator to determine body length
+        // Find first null terminator (body null)
         int bodyStart = 12;
-        int bodyEnd = bodyStart;
+        int bodyNullIndex = -1;
         for (int i = bodyStart; i < data.length - 1; i++) {
             if (data[i] == 0) {
-                bodyEnd = i;
+                bodyNullIndex = i;
                 break;
             }
         }
 
+        // Verify first null terminator exists
+        if (bodyNullIndex == -1) {
+            throw new ProtocolException("Missing body null terminator");
+        }
+
+        // Verify second null terminator (padding null) exists at expected position
+        int expectedPaddingNullIndex = bodyNullIndex + 1;
+        if (expectedPaddingNullIndex >= data.length || data[expectedPaddingNullIndex] != 0) {
+            throw new ProtocolException("Missing padding null terminator");
+        }
+
         // Extract body bytes and decode as UTF-8
-        int bodyLength = bodyEnd - bodyStart;
+        int bodyLength = bodyNullIndex - bodyStart;
         byte[] bodyBytes = new byte[bodyLength];
         System.arraycopy(data, bodyStart, bodyBytes, 0, bodyLength);
         String body = new String(bodyBytes, java.nio.charset.StandardCharsets.UTF_8);

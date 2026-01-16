@@ -1,6 +1,8 @@
 package com.rcon.application;
 
 import com.rcon.command.CommandDispatcher;
+import com.rcon.infrastructure.AuthenticationService;
+import com.rcon.infrastructure.RconConfig;
 import com.rcon.infrastructure.RconLogger;
 import com.rcon.protocol.ConnectionState;
 import com.rcon.protocol.RconPacket;
@@ -8,7 +10,6 @@ import com.rcon.protocol.RconProtocol;
 import com.rcon.transport.RconTransport;
 import com.rcon.transport.TransportCallbacks;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Application layer - thin coordinator between transport, protocol, and command
@@ -22,18 +23,18 @@ public class RconApplication implements TransportCallbacks {
     private final RconProtocol protocol;
     private final CommandDispatcher commandDispatcher;
     private final RconLogger logger;
+    private final RconConfig config;
 
     // Per-connection state (connection-scoped, not session-scoped)
     private final ConcurrentHashMap<String, ConnectionState> connectionStates = new ConcurrentHashMap<>();
-    private final AtomicInteger authRequestId = new AtomicInteger(1000);
-    private final AtomicInteger commandRequestId = new AtomicInteger(2000);
 
     public RconApplication(RconTransport transport, RconProtocol protocol,
-            CommandDispatcher commandDispatcher, RconLogger logger) {
+            CommandDispatcher commandDispatcher, RconLogger logger, RconConfig config) {
         this.transport = transport;
         this.protocol = protocol;
         this.commandDispatcher = commandDispatcher;
         this.logger = logger;
+        this.config = config;
     }
 
     /**
@@ -104,6 +105,12 @@ public class RconApplication implements TransportCallbacks {
 
             // Handle packet based on type and state
             if (packet.getType() == RconPacket.SERVERDATA_AUTH) {
+                // Reject re-authentication attempts
+                if (state.isReadyForCommand()) {
+                    logger.logProtocolViolation(connectionId, "Re-authentication not allowed");
+                    closeConnection(connectionId, "Re-authentication not allowed");
+                    return;
+                }
                 handleAuthPacket(connectionId, packet, state);
             } else if (packet.getType() == RconPacket.SERVERDATA_EXECCOMMAND && state.isReadyForCommand()) {
                 handleCommandPacket(connectionId, packet);
@@ -115,20 +122,38 @@ public class RconApplication implements TransportCallbacks {
     }
 
     /**
-     * Handle authentication packet (MVP: always succeeds).
+     * Handle authentication packet with password validation.
      */
     private void handleAuthPacket(String connectionId, RconPacket packet, ConnectionState state) throws Exception {
-        // MVP: Always accept authentication (no password validation)
         int responseId = packet.getId();
-        RconPacket response = protocol.createAuthResponse(responseId, true);
+        String providedPassword = packet.getBody();
+        boolean authSuccess = false;
 
+        // If no password is configured, allow authentication (backward compatibility for development/testing)
+        if (!config.requiresPassword()) {
+            authSuccess = true;
+            logger.logDebug(connectionId, "Auth accepted: no password configured (insecure mode)");
+        } else {
+            // Validate password
+            String storedHash = config.getPasswordHash();
+            if (storedHash != null && !storedHash.isEmpty()) {
+                authSuccess = AuthenticationService.verifyPassword(providedPassword, storedHash);
+            }
+        }
+
+        // Send auth response
+        RconPacket response = protocol.createAuthResponse(responseId, authSuccess);
         byte[] responseData = protocol.formatPacket(response);
         transport.send(connectionId, responseData);
 
-        // Mark connection as authenticated after sending response
-        state.markAuthenticated();
-
-        logger.logDebug(connectionId, "Auth processed: " + responseId);
+        if (authSuccess) {
+            // Mark connection as authenticated after sending response
+            state.markAuthenticated();
+            logger.logEvent("AUTH_SUCCESS", connectionId, java.util.Map.of("requestId", responseId));
+        } else {
+            logger.logEvent("AUTH_FAILURE", connectionId, java.util.Map.of("requestId", responseId));
+            closeConnection(connectionId, "Authentication failed");
+        }
     }
 
     /**
