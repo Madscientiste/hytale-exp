@@ -1,5 +1,5 @@
 {
-    "Group": "com.rcon",
+    "Group": "com.madscientiste.rcon",
     "Name": "Rcon",
     "Version": "1.0.0",
     "Description": "RCON (Remote Console) plugin for Hytale server",
@@ -8,7 +8,7 @@
             "Name": "Hytale Mod Exp"
         }
     ],
-    "Main": "com.rcon.RconPlugin",
+    "Main": "com.madscientiste.rcon.RconPlugin",
     "ServerVersion": "*",
     "Dependencies": {},
     "OptionalDependencies": {},

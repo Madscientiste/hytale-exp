@@ -2,7 +2,7 @@ plugins {
     java
 }
 
-group = "com.rcon"
+group = "com.madscientiste.rcon"
 version = "1.0.0"
 
 repositories {
