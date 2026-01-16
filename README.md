@@ -26,7 +26,7 @@ The RCON plugin provides remote console access to your Hytale server using the s
 
 ### Setup
 
-1. **Download and add the plugin**: The plugin is available at `/.server/mods/Rcon-1.0.0.jar`. Place the RCON plugin JAR in your server's plugins directory.
+1. **Download and add the plugin**: Download the latest release from the [Releases](https://github.com/Madscientiste/hytale-exp/releases) tab. Place the `rcon-x.x.x.jar` file in your server's `mods/` directory.
 
 2. **Configure in `config.json`**: Add the RCON configuration to your server's `config.json` file in the `Mods` section:
 
