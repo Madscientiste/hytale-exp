@@ -34,7 +34,7 @@ The RCON plugin provides remote console access to your Hytale server using the s
 {
   ...other server stuff
   "Mods": {
-    "com.rcon:Rcon": {
+    "com.madscientiste.rcon:Rcon": {
       "host": "127.0.0.1",
       "port": 25575,
       "maxConnections": 10,
@@ -47,26 +47,35 @@ The RCON plugin provides remote console access to your Hytale server using the s
 }
 ```
 
-3. **Generate Password Hash**: Use the included utility in the plugin JAR to generate a password hash:
+3. **Generate Password Hash**: Generate a password hash using one of the following methods:
 
+**Using Make (Recommended for developers)**
 ```bash
-# Using the plugin JAR directly (no source code needed)
-java -cp .server/mods/Rcon-1.0.0.jar com.rcon.infrastructure.AuthenticationService your_password_here
+make password PASSWORD=your_password_here
+```
+
+**Using the plugin JAR directly**
+```bash
+java -cp .server/mods/Rcon-1.0.0.jar com.madscientiste.rcon.infrastructure.AuthenticationService your_password_here
 ```
 
 **Example:**
 ```bash
-$ java -cp .server/mods/Rcon-1.0.0.jar com.rcon.infrastructure.AuthenticationService MySecurePassword123
+$ make password PASSWORD=MySecurePassword123
+Generating password hash...
 Password hash: dGhpc2lzYXNsdA==:YW5kdGhpc2lzdGhlcGFzc3dvcmRoYXNo
 Add this to your config.json:
   "passwordHash": "dGhpc2lzYXNsdA==:YW5kdGhpc2lzdGhlcGFzc3dvcmRoYXNo"
+Password hash generated
 ```
 
 The utility will output a hash in the format `base64salt:base64hash`. Copy this value to the `passwordHash` field in your config.
 
-**Note for developers:** If you're building from source, you can also use `./gradlew :rcon:hashPassword -Ppassword=your_password_here` from the project root.
-
 **Note**: If `passwordHash` is omitted or set to `null`, the server will run in insecure mode (no authentication required). This is only recommended for local development/testing.
+
+> [!NOTE]
+> For none devs, i'll figure out a better way to setup the password hash. Soon.
+>
 
 4. **Configuration Options**:
    - `host`: The IP address to bind the RCON server to (default: `127.0.0.1`)

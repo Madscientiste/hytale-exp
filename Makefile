@@ -1,4 +1,4 @@
-.PHONY: help build build-only test deploy run clean rcon-build release
+.PHONY: help build build-only test deploy run clean rcon-build release password
 
 # Default target
 help:
@@ -11,6 +11,8 @@ help:
 	@echo "  make run         - Run full Hytale server (requires assets)"
 	@echo "  make clean       - Clean all build artifacts"
 	@echo "  make rcon-build  - Build rcon project and deploy to .server/mods/"
+	@echo "  make password    - Generate password hash for RCON authentication"
+	@echo "                     Usage: make password PASSWORD=your_password_here"
 	@echo "  make release     - Create a new release"
 	@echo ""
 	@echo "                     Usage: make release TYPE=patch|minor|major PROJECT=project1[,project2]"
@@ -63,6 +65,17 @@ rcon-build:
 		fi; \
 	done
 	@echo "✓ Rcon build and deploy complete"
+
+# Generate password hash
+password:
+	@if [ -z "$(PASSWORD)" ]; then \
+		echo "❌ Error: PASSWORD is required"; \
+		echo "Usage: make password PASSWORD=your_password_here"; \
+		exit 1; \
+	fi
+	@echo "🔐 Generating password hash..."
+	./gradlew :rcon:hashPassword -Ppassword="$(PASSWORD)" --no-daemon
+	@echo "✓ Password hash generated"
 
 # Release
 release:
