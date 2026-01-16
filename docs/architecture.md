@@ -128,18 +128,28 @@ Module-specific configuration:
 ```bash
 # Build all modules
 ./gradlew build
+make build              # Build and deploy
 
 # Build specific module
 ./gradlew :playground:build
+./gradlew :rcon:build
+make rcon-build         # Build and deploy rcon module
 
 # Run tests
 ./gradlew test
+make test
 
 # Deploy plugins
 ./gradlew deploy
+make deploy
 
 # Build and deploy
 ./gradlew buildAndDeploy
+make build              # Same as buildAndDeploy
+
+# Generate password hash (rcon)
+make password PASSWORD=your_password
+./gradlew :rcon:hashPassword -Ppassword=your_password
 ```
 
 ## Module Configuration
@@ -218,36 +228,21 @@ The `run.sh` script handles:
 **Key Features**:
 - Auto-detects `mods/` directory (no need for `--mods` flag)
 - Conditionally adds `--assets` if Assets.zip exists
-- Supports `--bare` mode for plugin testing
 - Configurable via environment variables or CLI args
 
-### Server Modes
+### Server Mode
 
-#### Full Mode (Default)
-```bash
-make run
-# or
-.server/run.sh
-```
-
-Runs full server with:
+The server runs in full mode with:
 - World loading
 - Port binding
 - Asset loading
 - All server features
 
-#### Bare Mode
 ```bash
-make run-bare
+make run
 # or
-.server/run.sh --bare
+.server/run.sh
 ```
-
-Runs minimal server for plugin testing:
-- No world loading
-- No port binding
-- No directory creation
-- **Plugins still load** (for testing)
 
 ## Development Workflow
 
@@ -260,6 +255,9 @@ make build
 # Or step by step
 make build-only  # Just build
 make deploy      # Deploy built JARs
+
+# Build specific module (rcon)
+make rcon-build
 ```
 
 ### 2. Test
@@ -275,11 +273,8 @@ make test
 ### 3. Run Server
 
 ```bash
-# Full server (requires assets)
+# Run server (requires assets)
 make run
-
-# Bare mode (plugin testing)
-make run-bare
 ```
 
 ### 4. Development Cycle
@@ -287,7 +282,7 @@ make run-bare
 1. Edit plugin code in `projects/<module>/app/src/main/java/`
 2. Build: `make build`
 3. Test: `make test`
-4. Run: `make run-bare` (for quick testing) or `make run` (full server)
+4. Run: `make run` (full server)
 
 ## Deployment Process
 
@@ -381,21 +376,28 @@ make build       # Build and deploy all plugins
 make build-only  # Build without deploying
 make test        # Run all tests
 make deploy      # Deploy built plugins
-make run         # Run full server
-make run-bare    # Run server in bare mode
+make run         # Run full server (requires assets)
 make clean       # Clean build artifacts
+make rcon-build  # Build rcon project and deploy to .server/mods/
+make password    # Generate password hash for RCON authentication
+                 # Usage: make password PASSWORD=your_password_here
+make release   # Create a new release
+                 # Usage: make release TYPE=patch|minor|major PROJECT=project1[,project2]
 ```
 
 ### Gradle Commands
 
 ```bash
-./gradlew build              # Build all modules
-./gradlew :playground:build  # Build specific module
-./gradlew test               # Run all tests
-./gradlew deploy             # Deploy plugins
-./gradlew buildAndDeploy     # Build and deploy
-./gradlew clean              # Clean build artifacts
-./gradlew tasks              # List all tasks
+./gradlew build                    # Build all modules
+./gradlew :playground:build        # Build specific module
+./gradlew :rcon:build              # Build rcon module
+./gradlew test                     # Run all tests
+./gradlew :rcon:test                # Run tests for specific module
+./gradlew deploy                   # Deploy plugins
+./gradlew buildAndDeploy           # Build and deploy
+./gradlew clean                    # Clean build artifacts
+./gradlew :rcon:hashPassword       # Generate password hash (requires -Ppassword=...)
+./gradlew tasks                    # List all tasks
 ```
 
 ## Plugin Lifecycle
@@ -424,8 +426,7 @@ Hytale plugins implement the `JavaPlugin` interface with three lifecycle methods
 **Problem**: Server fails to start due to missing assets
 
 **Solution**: 
-- Use `make run-bare` for plugin testing
-- Or download Assets.zip from official portal and place in `libs/`
+- Download Assets.zip from official portal and place in `libs/`
 
 ### Plugin Not Loading
 
