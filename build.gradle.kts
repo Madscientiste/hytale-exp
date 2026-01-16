@@ -1,5 +1,6 @@
 plugins {
     java
+    alias(libs.plugins.spotless)
 }
 
 // Root project configuration
@@ -40,4 +41,18 @@ tasks.register("buildAndDeploy") {
     group = "build"
     description = "Build all projects and deploy to mods/"
     dependsOn("build", "deploy")
+}
+
+subprojects {
+    apply(plugin = "com.diffplug.spotless")
+    
+    configure<com.diffplug.gradle.spotless.SpotlessExtension> {
+        java {
+            target("**/*.java")
+            googleJavaFormat("1.33.0")
+            removeUnusedImports()
+            trimTrailingWhitespace()
+            endWithNewline()
+        }
+    }
 }
