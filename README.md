@@ -89,7 +89,7 @@ Once configured, you can connect to the RCON server using any RCON-compatible cl
 
 **Example RCON clients:**
 - `mcrcon` (command-line tool)
-- `rcon-cli` (Node.js)
+- `rcon-cli` ([itzg's cli tool](https://github.com/itzg/rcon-cli))
 - Custom scripts using RCON libraries
 
 > [!WARNING]
