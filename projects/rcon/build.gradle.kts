@@ -28,6 +28,20 @@ tasks.jar {
     archiveBaseName.set("rcon")
 }
 
+// Task to generate password hash
+tasks.register<JavaExec>("hashPassword") {
+    group = "rcon"
+    description = "Generate a password hash for RCON authentication"
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("com.rcon.infrastructure.AuthenticationService")
+    
+    if (project.hasProperty("password")) {
+        args(project.property("password"))
+    } else {
+        println("Usage: ./gradlew :rcon:hashPassword -Ppassword=your_password_here")
+    }
+}
+
 // Configure source sets to use app/src structure
 sourceSets {
     main {
