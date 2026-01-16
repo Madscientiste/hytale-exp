@@ -3,12 +3,7 @@
 This project is currently a **Work in Progress**. I'm in the process of exploring and figuring things out, and along the way I’m building the tools I need.
 
 > [!NOTE]
-> This document is also a work in progress. If you have any questions, feel free to open a discussion or issue, I usually respond quickly.
->
-> I plan to make this project publicly available in the next few days to make it easier to access.
-
-> [!NOTE]
-> If any issue occurs, please open an issue, I will try to fix it as soon as possible.
+> If you encounter any issues or have questions, please open an issue or discussion. I typically respond quickly.
 
 ## RCON Plugin
 
