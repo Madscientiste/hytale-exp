@@ -1,4 +1,4 @@
-package com.playground;
+package com.madscientiste.playground;
 
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.JavaPluginInit;

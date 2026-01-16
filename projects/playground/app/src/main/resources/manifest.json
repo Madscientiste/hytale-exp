@@ -1,18 +1,18 @@
 {
-  "Group": "com.playground",
-  "Name": "Playground",
-  "Version": "1.0.0",
-  "Description": "An example Hytale server plugin",
-  "Authors": [
-    {
-      "Name": "Your Name"
-    }
-  ],
-  "Main": "com.playground.Playground",
-  "ServerVersion": "*",
-  "Dependencies": {},
-  "OptionalDependencies": {},
-  "DisabledByDefault": false,
-  "IncludesAssetPack": false,
-  "SubPlugins": []
+    "Group": "com.madscientiste.playground",
+    "Name": "Playground",
+    "Version": "1.0.0",
+    "Description": "An example Hytale server plugin",
+    "Authors": [
+        {
+            "Name": "Your Name"
+        }
+    ],
+    "Main": "com.madscientiste.playground.Playground",
+    "ServerVersion": "*",
+    "Dependencies": {},
+    "OptionalDependencies": {},
+    "DisabledByDefault": false,
+    "IncludesAssetPack": false,
+    "SubPlugins": []
 }

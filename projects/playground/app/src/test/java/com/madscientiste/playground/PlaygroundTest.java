@@ -1,6 +1,6 @@
-package com.playground;
+package com.madscientiste.playground;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertNotNull;
 
 import org.junit.Test;
 

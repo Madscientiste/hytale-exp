@@ -2,7 +2,7 @@ plugins {
     java
 }
 
-group = "com.playground"
+group = "com.madscientiste.playground"
 version = "1.0.0"
 
 repositories {
