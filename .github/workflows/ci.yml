@@ -1,42 +1,149 @@
-# name: Java CI with Gradle
+name: CI
 
-# TODO: SETUP CI with auto downloading hytale server from the api
-# jobs:
-#   build:
-#     runs-on: ubuntu-latest
-#     permissions:
-#       contents: read
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
 
-#     steps:
-#       - uses: actions/checkout@v5
+env:
+  HYTALE_SERVER_VERSION: "2026.01.15-c04fdfe10"
 
-#       - name: Set up JDK 25
-#         uses: actions/setup-java@v4
-#         with:
-#           distribution: temurin
-#           java-version: "25"
-#           cache: gradle
+permissions:
+  contents: read
+  packages: read
 
-#       - name: Setup Gradle
-#         uses: gradle/actions/setup-gradle@v4
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-#       - name: Build
-#         run: ./gradlew build
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '25'
+          cache: 'gradle'
 
-#   dependency-submission:
-#     runs-on: ubuntu-latest
-#     permissions:
-#       contents: write
+      - name: Cache server files
+        uses: actions/cache@v4
+        with:
+          path: libs/
+          key: server-files-${{ runner.os }}-${{ env.HYTALE_SERVER_VERSION }}
+          restore-keys: |
+            server-files-${{ runner.os }}-
 
-#     steps:
-#       - uses: actions/checkout@v5
+      - name: Check if server files exist
+        id: check-server-files
+        run: |
+          if [ -f libs/HytaleServer.jar ] && [ -f libs/Assets.zip ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
 
-#       - name: Set up JDK 25
-#         uses: actions/setup-java@v4
-#         with:
-#           distribution: temurin
-#           java-version: "25"
-#           cache: gradle
+      - name: Log in to GitHub Container Registry
+        if: steps.check-server-files.outputs.exists != 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-#       - name: Generate and submit dependency graph
-#         uses: gradle/actions/dependency-submission@v4
+      - name: Extract server files
+        if: steps.check-server-files.outputs.exists != 'true'
+        run: |
+          docker create --name hytale-server-extract \
+            ghcr.io/madscientiste/hytale-server:${{ env.HYTALE_SERVER_VERSION }}
+          docker cp hytale-server-extract:/server ./server-files
+          docker rm hytale-server-extract
+
+      - name: Set up server files
+        if: steps.check-server-files.outputs.exists != 'true'
+        run: |
+          mkdir -p libs
+          
+          # Find and rename hs-*.jar to HytaleServer.jar
+          HS_JAR=$(find ./server-files -name "hs-*.jar" | head -1)
+          if [ -n "$HS_JAR" ]; then
+            cp "$HS_JAR" ./libs/HytaleServer.jar
+            echo "Copied $(basename "$HS_JAR") to libs/HytaleServer.jar"
+            
+            # Extract version from filename for verification
+            VERSION=$(basename "$HS_JAR" | sed 's/^hs-\(.*\)\.jar$/\1/')
+            echo "Server version: $VERSION"
+            echo "Expected version: ${{ env.HYTALE_SERVER_VERSION }}"
+          else
+            echo "Warning: hs-*.jar not found in server-files"
+            ls -la ./server-files
+          fi
+          
+          # Find and rename ha-*.zip to Assets.zip
+          HA_ZIP=$(find ./server-files -name "ha-*.zip" | head -1)
+          if [ -n "$HA_ZIP" ]; then
+            cp "$HA_ZIP" ./libs/Assets.zip
+            echo "Copied $(basename "$HA_ZIP") to libs/Assets.zip"
+            
+            # Extract version from filename for verification
+            VERSION=$(basename "$HA_ZIP" | sed 's/^ha-\(.*\)\.zip$/\1/')
+            echo "Assets version: $VERSION"
+          else
+            echo "Warning: ha-*.zip not found in server-files"
+            ls -la ./server-files
+          fi
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build with Gradle
+        run: ./gradlew build
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            **/build/test-results/**/*.xml
+            **/build/reports/tests/**/*
+
+      - name: Upload build artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            **/build/libs/*.jar
+          retention-days: 7
+
+  dependency-submission:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+      packages: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '25'
+          cache: 'gradle'
+
+      - name: Cache server files
+        uses: actions/cache@v4
+        with:
+          path: libs/
+          key: server-files-${{ runner.os }}-${{ env.HYTALE_SERVER_VERSION }}
+          restore-keys: |
+            server-files-${{ runner.os }}-
+
+      - name: Generate and submit dependency graph
+        uses: gradle/actions/dependency-submission@v4
