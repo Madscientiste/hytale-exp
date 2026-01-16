@@ -56,10 +56,20 @@ jobs:
       - name: Extract server files
         if: steps.check-server-files.outputs.exists != 'true'
         run: |
-          docker create --name hytale-server-extract \
-            ghcr.io/madscientiste/hytale-server:${{ env.HYTALE_SERVER_VERSION }}
-          docker cp hytale-server-extract:/server ./server-files
-          docker rm hytale-server-extract
+          mkdir -p server-files
+          # For scratch-based images, export as tar and extract files from layers
+          docker image save ghcr.io/madscientiste/hytale-server:${{ env.HYTALE_SERVER_VERSION }} -o /tmp/hytale-image.tar
+          # Extract manifest and find the layer with server files
+          EXTRACT_DIR=$(mktemp -d)
+          tar -xf /tmp/hytale-image.tar -C "$EXTRACT_DIR"
+          # Find layer containing server/ directory
+          for layer_tar in "$EXTRACT_DIR"/*/layer.tar; do
+            if [ -f "$layer_tar" ] && tar -tf "$layer_tar" 2>/dev/null | grep -q "^server/"; then
+              tar -xf "$layer_tar" server/ -C server-files --strip-components=1
+              break
+            fi
+          done
+          rm -rf /tmp/hytale-image.tar "$EXTRACT_DIR"
 
       - name: Set up server files
         if: steps.check-server-files.outputs.exists != 'true'
