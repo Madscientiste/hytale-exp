@@ -63,8 +63,26 @@ jobs:
           docker rm hytale-server-extract
           
           # Find and copy files with proper names
-          cp ./server-files/hs-*.jar ./libs/HytaleServer.jar
-          cp ./server-files/ha-*.zip ./libs/Assets.zip
+          HS_JAR=$(find ./server-files -name "hs-*.jar" | head -1)
+          HA_ZIP=$(find ./server-files -name "ha-*.zip" | head -1)
+          
+          if [ -n "$HS_JAR" ]; then
+            cp "$HS_JAR" ./libs/HytaleServer.jar
+            echo "Copied $(basename "$HS_JAR") to HytaleServer.jar"
+          else
+            echo "Error: hs-*.jar not found in server-files"
+            ls -la ./server-files
+            exit 1
+          fi
+          
+          if [ -n "$HA_ZIP" ]; then
+            cp "$HA_ZIP" ./libs/Assets.zip
+            echo "Copied $(basename "$HA_ZIP") to Assets.zip"
+          else
+            echo "Error: ha-*.zip not found in server-files"
+            ls -la ./server-files
+            exit 1
+          fi
           
           echo "Extracted server files:"
           ls -la ./libs/
