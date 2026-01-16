@@ -56,54 +56,18 @@ jobs:
       - name: Extract server files
         if: steps.check-server-files.outputs.exists != 'true'
         run: |
-          mkdir -p server-files
-          # For scratch-based images, export as tar and extract files from layers
-          docker image save ghcr.io/madscientiste/hytale-server:${{ env.HYTALE_SERVER_VERSION }} -o /tmp/hytale-image.tar
-          # Extract manifest and find the layer with server files
-          EXTRACT_DIR=$(mktemp -d)
-          tar -xf /tmp/hytale-image.tar -C "$EXTRACT_DIR"
-          # Find layer containing server/ directory
-          for layer_tar in "$EXTRACT_DIR"/*/layer.tar; do
-            if [ -f "$layer_tar" ] && tar -tf "$layer_tar" 2>/dev/null | grep -q "^server/"; then
-              tar -xf "$layer_tar" server/ -C server-files --strip-components=1
-              break
-            fi
-          done
-          rm -rf /tmp/hytale-image.tar "$EXTRACT_DIR"
-
-      - name: Set up server files
-        if: steps.check-server-files.outputs.exists != 'true'
-        run: |
-          mkdir -p libs
+          mkdir -p libs server-files
+          docker create --name hytale-server-extract \
+            ghcr.io/madscientiste/hytale-server:${{ env.HYTALE_SERVER_VERSION }}
+          docker cp hytale-server-extract:/server ./server-files
+          docker rm hytale-server-extract
           
-          # Find and rename hs-*.jar to HytaleServer.jar
-          HS_JAR=$(find ./server-files -name "hs-*.jar" | head -1)
-          if [ -n "$HS_JAR" ]; then
-            cp "$HS_JAR" ./libs/HytaleServer.jar
-            echo "Copied $(basename "$HS_JAR") to libs/HytaleServer.jar"
-            
-            # Extract version from filename for verification
-            VERSION=$(basename "$HS_JAR" | sed 's/^hs-\(.*\)\.jar$/\1/')
-            echo "Server version: $VERSION"
-            echo "Expected version: ${{ env.HYTALE_SERVER_VERSION }}"
-          else
-            echo "Warning: hs-*.jar not found in server-files"
-            ls -la ./server-files
-          fi
+          # Find and copy files with proper names
+          cp ./server-files/hs-*.jar ./libs/HytaleServer.jar
+          cp ./server-files/ha-*.zip ./libs/Assets.zip
           
-          # Find and rename ha-*.zip to Assets.zip
-          HA_ZIP=$(find ./server-files -name "ha-*.zip" | head -1)
-          if [ -n "$HA_ZIP" ]; then
-            cp "$HA_ZIP" ./libs/Assets.zip
-            echo "Copied $(basename "$HA_ZIP") to libs/Assets.zip"
-            
-            # Extract version from filename for verification
-            VERSION=$(basename "$HA_ZIP" | sed 's/^ha-\(.*\)\.zip$/\1/')
-            echo "Assets version: $VERSION"
-          else
-            echo "Warning: ha-*.zip not found in server-files"
-            ls -la ./server-files
-          fi
+          echo "Extracted server files:"
+          ls -la ./libs/
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
