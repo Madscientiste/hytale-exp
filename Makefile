@@ -1,9 +1,4 @@
-.PHONY: help build build-only test deploy run clean rcon-build
-
-# FIX; currently i don't really like what i've done
-# sure it works but since this is a monorpo i don't want to 
-# manually add modules; maybe i'll take inspiration from AOSP
-# as they have a similar structure
+.PHONY: help build build-only test deploy run clean rcon-build release
 
 # Default target
 help:
@@ -14,9 +9,15 @@ help:
 	@echo "  make test        - Run all tests"
 	@echo "  make deploy      - Deploy built JARs to .server/mods/"
 	@echo "  make run         - Run full Hytale server (requires assets)"
-	@echo "  make run-bare    - Run server in bare mode (plugin testing, no worlds)"
 	@echo "  make clean       - Clean all build artifacts"
 	@echo "  make rcon-build  - Build rcon project and deploy to .server/mods/"
+	@echo "  make release     - Create a new release"
+	@echo ""
+	@echo "                     Usage: make release TYPE=patch|minor|major PROJECT=project1[,project2]"
+	@echo "                     Examples:"
+	@echo "                       make release TYPE=patch PROJECT=rcon"
+	@echo "                       make release TYPE=minor PROJECT=playground"
+	@echo "                       make release TYPE=patch PROJECT=rcon,playground"
 	@echo ""
 
 # Build and deploy
@@ -44,11 +45,6 @@ run:
 	@echo "🚀 Starting Hytale server (requires assets)..."
 	.server/run.sh
 
-# Run server in bare mode (for plugin testing without full server setup)
-run-bare:
-	@echo "🚀 Starting Hytale server in bare mode (plugin testing)..."
-	.server/run.sh --bare
-
 # Clean build artifacts
 clean:
 	@echo "🧹 Cleaning build artifacts..."
@@ -67,4 +63,18 @@ rcon-build:
 		fi; \
 	done
 	@echo "✓ Rcon build and deploy complete"
+
+# Release
+release:
+	@if [ -z "$(TYPE)" ]; then \
+		echo "❌ Error: TYPE is required"; \
+		echo "Usage: make release TYPE=patch|minor|major PROJECT=project1[,project2]"; \
+		exit 1; \
+	fi
+	@if [ -z "$(PROJECT)" ]; then \
+		echo "❌ Error: PROJECT is required"; \
+		echo "Usage: make release TYPE=patch|minor|major PROJECT=project1[,project2]"; \
+		exit 1; \
+	fi
+	@./tools/release.sh $(TYPE) $(PROJECT)
 

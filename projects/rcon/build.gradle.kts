@@ -25,7 +25,7 @@ dependencies {
 
 tasks.jar {
     // Set the archive name
-    archiveBaseName.set("Rcon")
+    archiveBaseName.set("rcon")
 }
 
 // Configure source sets to use app/src structure
