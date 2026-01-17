@@ -1,0 +1,251 @@
+name: Create release
+
+on:
+  push:
+    tags:
+      - '*-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release pushed tag
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Parse tag and extract project info
+        id: parse-tag
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          
+          # Extract project name and version from tag (format: project-vX.Y.Z)
+          if [[ "$TAG_NAME" =~ ^(.+)-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            PROJECT_NAME="${BASH_REMATCH[1]}"
+            VERSION="${BASH_REMATCH[2]}"
+            echo "project=$PROJECT_NAME" >> $GITHUB_OUTPUT
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
+            echo "✓ Parsed tag: project=$PROJECT_NAME, version=$VERSION"
+          else
+            echo "❌ Invalid tag format: $TAG_NAME (expected: project-vX.Y.Z)"
+            exit 1
+          fi
+          
+          # Verify project exists
+          if [ ! -d "projects/$PROJECT_NAME" ]; then
+            echo "❌ Project directory not found: projects/$PROJECT_NAME"
+            exit 1
+          fi
+
+      - name: Build project
+        run: |
+          PROJECT="${{ steps.parse-tag.outputs.project }}"
+          echo "🔨 Building project: $PROJECT"
+          ./gradlew ":${PROJECT}:build" --no-daemon
+
+      - name: Collect build artifacts
+        id: collect-artifacts
+        run: |
+          PROJECT="${{ steps.parse-tag.outputs.project }}"
+          ARTIFACTS_DIR="projects/${PROJECT}/build/libs"
+          
+          if [ ! -d "$ARTIFACTS_DIR" ]; then
+            echo "❌ Build artifacts directory not found: $ARTIFACTS_DIR"
+            exit 1
+          fi
+          
+          # Find all JAR files (excluding sources and javadoc JARs)
+          JAR_FILES=$(find "$ARTIFACTS_DIR" -name "*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" | sort)
+          
+          if [ -z "$JAR_FILES" ]; then
+            echo "❌ No JAR files found in $ARTIFACTS_DIR"
+            exit 1
+          fi
+          
+          # Create a newline-separated list for upload-artifact
+          echo "$JAR_FILES" | while IFS= read -r jar; do
+            echo "  ✓ Found: $jar"
+          done
+          
+          # Store paths for later use (newline-separated)
+          echo "jar_paths<<EOF" >> $GITHUB_OUTPUT
+          echo "$JAR_FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-jars
+          path: |
+            projects/${{ steps.parse-tag.outputs.project }}/build/libs/*.jar
+            !projects/${{ steps.parse-tag.outputs.project }}/build/libs/*-sources.jar
+            !projects/${{ steps.parse-tag.outputs.project }}/build/libs/*-javadoc.jar
+          retention-days: 1
+
+      - name: Generate release notes
+        id: release-notes
+        run: |
+          PROJECT="${{ steps.parse-tag.outputs.project }}"
+          TAG="${{ steps.parse-tag.outputs.tag }}"
+          VERSION="${{ steps.parse-tag.outputs.version }}"
+          
+          # Check if CHANGELOG.md exists in project directory
+          CHANGELOG_PATH="projects/${PROJECT}/CHANGELOG.md"
+          
+          if [ -f "$CHANGELOG_PATH" ]; then
+            echo "📝 Using CHANGELOG.md for release notes"
+            
+            # Extract section for this version from CHANGELOG
+            # Look for version header (e.g., ## [1.0.1] or ## 1.0.1)
+            VERSION_PATTERN="^## \[?${VERSION}\]?"
+            IN_SECTION=false
+            NOTES=""
+            
+            while IFS= read -r line || [ -n "$line" ]; do
+              if [[ "$line" =~ $VERSION_PATTERN ]]; then
+                IN_SECTION=true
+                continue
+              fi
+              
+              if [ "$IN_SECTION" = true ]; then
+                # Stop at next version header
+                if [[ "$line" =~ ^## ]]; then
+                  break
+                fi
+                NOTES="${NOTES}${line}"$'\n'
+              fi
+            done < "$CHANGELOG_PATH"
+            
+            # Trim trailing newlines
+            NOTES=$(printf '%s' "$NOTES" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')
+            
+            if [ -n "$NOTES" ]; then
+              echo "notes<<EOF" >> $GITHUB_OUTPUT
+              printf '%s' "$NOTES" >> $GITHUB_OUTPUT
+              echo "EOF" >> $GITHUB_OUTPUT
+              echo "use_changelog=true" >> $GITHUB_OUTPUT
+            else
+              echo "⚠️  No notes found for version $VERSION in CHANGELOG.md, falling back to commit history"
+            fi
+          else
+            echo "📝 CHANGELOG.md not found, generating from commit history"
+          fi
+          
+          # If not using changelog, generate from commits
+          USE_CHANGELOG_VAR=""
+          if [ -f "$CHANGELOG_PATH" ] && [ -n "$NOTES" ]; then
+            USE_CHANGELOG_VAR="true"
+          else
+            USE_CHANGELOG_VAR="false"
+          fi
+          
+          if [ "$USE_CHANGELOG_VAR" != "true" ]; then
+            # Find previous tag for this project
+            ALL_PROJECT_TAGS=$(git tag -l "${PROJECT}-v*" | sort -V)
+            PREV_TAG=$(echo "$ALL_PROJECT_TAGS" | grep -B1 "^${TAG}$" | head -n1)
+            
+            if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "$TAG" ]; then
+              # First release for this project - get all commits up to this tag
+              COMMIT_RANGE="${TAG}"
+              echo "📝 First release for $PROJECT, including all commits up to $TAG"
+            else
+              COMMIT_RANGE="${PREV_TAG}..${TAG}"
+              echo "📝 Generating notes from commits between $PREV_TAG and $TAG"
+            fi
+            
+            # Generate notes from commits
+            # Filter commits that modify files in this project directory
+            NOTES="## Changes"$'\n'$'\n'
+            
+            # Get commits that touch this project
+            COMMITS=$(git log "$COMMIT_RANGE" --pretty=format:"%H" --reverse -- "projects/${PROJECT}/")
+            
+            if [ -z "$COMMITS" ]; then
+              NOTES="${NOTES}No project-specific commits found in this release."$'\n'
+            else
+              for commit in $COMMITS; do
+                SUBJECT=$(git log -1 --pretty=format:"%s" "$commit")
+                BODY=$(git log -1 --pretty=format:"%b" "$commit")
+                
+                NOTES="${NOTES}### ${SUBJECT}"$'\n'$'\n'
+                if [ -n "$BODY" ]; then
+                  # Indent body lines and preserve formatting
+                  while IFS= read -r body_line; do
+                    NOTES="${NOTES}  ${body_line}"$'\n'
+                  done <<< "$BODY"
+                  NOTES="${NOTES}"$'\n'
+                fi
+              done
+            fi
+            
+            echo "notes<<EOF" >> $GITHUB_OUTPUT
+            printf '%s' "$NOTES" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "use_changelog=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.parse-tag.outputs.tag }}
+          PROJECT: ${{ steps.parse-tag.outputs.project }}
+          VERSION: ${{ steps.parse-tag.outputs.version }}
+        run: |
+          # Prepare release title
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          TITLE="${PROJECT} ${VERSION}"
+          
+          # Use custom notes if available, otherwise let gh generate
+          if [ -n "${{ steps.release-notes.outputs.notes }}" ]; then
+            echo "${{ steps.release-notes.outputs.notes }}" > /tmp/release_notes.md
+            
+            # Create release with custom notes
+            gh release create "$TAG" \
+              --repo="$GITHUB_REPOSITORY" \
+              --title="$TITLE" \
+              --notes-file=/tmp/release_notes.md
+          else
+            # Fallback to auto-generated notes
+            gh release create "$TAG" \
+              --repo="$GITHUB_REPOSITORY" \
+              --title="$TITLE" \
+              --generate-notes
+          fi
+
+      - name: Upload JAR files to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.parse-tag.outputs.tag }}
+        run: |
+          PROJECT="${{ steps.parse-tag.outputs.project }}"
+          ARTIFACTS_DIR="projects/${PROJECT}/build/libs"
+          
+          # Upload each JAR file
+          find "$ARTIFACTS_DIR" -name "*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" | while read -r jar; do
+            JAR_NAME=$(basename "$jar")
+            echo "📦 Uploading $JAR_NAME to release $TAG"
+            gh release upload "$TAG" "$jar" --repo="$GITHUB_REPOSITORY" --clobber
+          done
+
+      - name: Release summary
+        run: |
+          echo "✅ Release created successfully!"
+          echo "Project: ${{ steps.parse-tag.outputs.project }}"
+          echo "Version: ${{ steps.parse-tag.outputs.version }}"
+          echo "Tag: ${{ steps.parse-tag.outputs.tag }}"
+          echo "Release URL: https://github.com/${{ github.repository }}/releases/tag/${{ steps.parse-tag.outputs.tag }}"
+
