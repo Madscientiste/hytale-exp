@@ -3,14 +3,15 @@ package com.madscientiste.rcon;
 import com.madscientiste.rcon.infrastructure.RconConfig;
 
 /**
- * Simple manual test to validate the RCON server works. Run this class manually to test the server.
+ * Simple manual test to validate the RCON server works. Run this class manually
+ * to test the server.
  */
 public class RconServerManualTest {
 
   public static void main(String[] args) {
     try {
       // Create server with default config
-      RconConfig config = new RconConfig();
+      RconConfig config = RconConfig.builder().build();
       RconServer server = new RconServer(config);
 
       // Add shutdown hook

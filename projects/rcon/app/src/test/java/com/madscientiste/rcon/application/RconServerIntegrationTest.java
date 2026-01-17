@@ -4,16 +4,20 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-import com.madscientiste.rcon.RconServer;
-import com.madscientiste.rcon.infrastructure.RconConfig;
-import com.madscientiste.rcon.infrastructure.RconLogger;
-import com.madscientiste.rcon.protocol.RconPacket;
 import java.io.IOException;
 import java.net.Socket;
+
 import org.junit.Test;
 
+import com.madscientiste.rcon.RconServer;
+import com.madscientiste.rcon.infrastructure.RconConfig;
+import com.madscientiste.rcon.infrastructure.RconConstants;
+import com.madscientiste.rcon.infrastructure.RconLogger;
+import com.madscientiste.rcon.protocol.RconPacket;
+
 /**
- * Integration tests for the full RCON server. Tests the complete data flow: Bytes → Transport →
+ * Integration tests for the full RCON server. Tests the complete data flow:
+ * Bytes → Transport →
  * Protocol → Application → Response.
  */
 public class RconServerIntegrationTest {
@@ -23,9 +27,15 @@ public class RconServerIntegrationTest {
   private RconLogger logger;
 
   public void setUp() throws Exception {
-    config =
-        new RconConfig(
-            "127.0.0.1", 25576, 10, 4096, 5000, 5000, null); // Fixed port for tests, no password
+    config = RconConfig.builder()
+        .host(RconConstants.TEST_HOST)
+        .port(RconConstants.TEST_PORT)
+        .maxConnections(RconConstants.DEFAULT_MAX_CONNECTIONS)
+        .maxFrameSize(RconConstants.DEFAULT_MAX_FRAME_SIZE)
+        .readTimeoutMs(RconConstants.DEFAULT_CONNECTION_TIMEOUT_MS)
+        .connectionTimeoutMs(RconConstants.DEFAULT_CONNECTION_TIMEOUT_MS)
+        .passwordHash(null)
+        .build(); // Fixed port for tests, no password
     server = new RconServer(config);
     logger = new RconLogger();
 
@@ -46,7 +56,7 @@ public class RconServerIntegrationTest {
     int port = getServerPort();
 
     // Test connection
-    Socket client = new Socket("127.0.0.1", port);
+    Socket client = new Socket(RconConstants.TEST_HOST, port);
     assertTrue("Client should connect", client.isConnected());
 
     // Test disconnect
@@ -64,7 +74,7 @@ public class RconServerIntegrationTest {
     setUp();
 
     int port = getServerPort();
-    Socket client = new Socket("127.0.0.1", port);
+    Socket client = new Socket(RconConstants.TEST_HOST, port);
 
     try {
       // Send auth packet
@@ -78,8 +88,7 @@ public class RconServerIntegrationTest {
       assertEquals("Auth response type", RconPacket.SERVERDATA_AUTH_RESPONSE, parsedAuth.getType());
 
       // Send command packet
-      RconPacket commandPacket =
-          new RconPacket(101, RconPacket.SERVERDATA_EXECCOMMAND, "echo hello world");
+      RconPacket commandPacket = new RconPacket(101, RconPacket.SERVERDATA_EXECCOMMAND, "echo hello world");
       client.getOutputStream().write(commandPacket.toBytes());
 
       // Read command response
@@ -101,7 +110,7 @@ public class RconServerIntegrationTest {
     setUp();
 
     int port = getServerPort();
-    Socket client = new Socket("127.0.0.1", port);
+    Socket client = new Socket(RconConstants.TEST_HOST, port);
 
     try {
       // Authenticate once
@@ -110,12 +119,11 @@ public class RconServerIntegrationTest {
       readPacket(client); // Consume auth response
 
       // Send multiple commands
-      String[] commands = {"first", "second", "third"};
+      String[] commands = { "first", "second", "third" };
       int requestId = 200;
 
       for (String command : commands) {
-        RconPacket commandPacket =
-            new RconPacket(requestId, RconPacket.SERVERDATA_EXECCOMMAND, "echo " + command);
+        RconPacket commandPacket = new RconPacket(requestId, RconPacket.SERVERDATA_EXECCOMMAND, "echo " + command);
         client.getOutputStream().write(commandPacket.toBytes());
 
         byte[] response = readPacket(client);
@@ -137,8 +145,8 @@ public class RconServerIntegrationTest {
     setUp();
 
     int port = getServerPort();
-    Socket client1 = new Socket("127.0.0.1", port);
-    Socket client2 = new Socket("127.0.0.1", port);
+    Socket client1 = new Socket(RconConstants.TEST_HOST, port);
+    Socket client2 = new Socket(RconConstants.TEST_HOST, port);
 
     // Give both connections time to establish
     Thread.sleep(100);
@@ -169,15 +177,15 @@ public class RconServerIntegrationTest {
     int bytesRead = 0;
     while (bytesRead < 4) {
       int read = socket.getInputStream().read(sizeBytes, bytesRead, 4 - bytesRead);
-      if (read == -1) throw new IOException("Connection closed");
+      if (read == -1)
+        throw new IOException("Connection closed");
       bytesRead += read;
     }
 
-    int size =
-        (sizeBytes[0] & 0xFF)
-            | ((sizeBytes[1] & 0xFF) << 8)
-            | ((sizeBytes[2] & 0xFF) << 16)
-            | ((sizeBytes[3] & 0xFF) << 24);
+    int size = (sizeBytes[0] & 0xFF)
+        | ((sizeBytes[1] & 0xFF) << 8)
+        | ((sizeBytes[2] & 0xFF) << 16)
+        | ((sizeBytes[3] & 0xFF) << 24);
 
     // Read the rest of the packet
     byte[] packetData = new byte[4 + size];
@@ -186,7 +194,8 @@ public class RconServerIntegrationTest {
     bytesRead = 0;
     while (bytesRead < size) {
       int read = socket.getInputStream().read(packetData, 4 + bytesRead, size - bytesRead);
-      if (read == -1) throw new IOException("Connection closed");
+      if (read == -1)
+        throw new IOException("Connection closed");
       bytesRead += read;
     }
 

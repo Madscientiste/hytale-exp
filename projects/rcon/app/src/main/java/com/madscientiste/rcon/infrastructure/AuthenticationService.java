@@ -16,6 +16,9 @@ public class AuthenticationService {
 
   private static final String HASH_ALGORITHM = "SHA-256";
   private static final int SALT_LENGTH = 16;
+  private static final int PASSWORD_LENGTH = 24;
+  private static final String PASSWORD_CHARS =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
 
   /**
    * Hash a password with a random salt.
@@ -64,6 +67,24 @@ public class AuthenticationService {
     } catch (Exception e) {
       return false;
     }
+  }
+
+  /**
+   * Generate a cryptographically secure random password.
+   *
+   * @return A secure random password string of length PASSWORD_LENGTH
+   */
+  @Nonnull
+  public static String generateSecurePassword() {
+    SecureRandom random = new SecureRandom();
+    StringBuilder password = new StringBuilder(PASSWORD_LENGTH);
+
+    for (int i = 0; i < PASSWORD_LENGTH; i++) {
+      int index = random.nextInt(PASSWORD_CHARS.length());
+      password.append(PASSWORD_CHARS.charAt(index));
+    }
+
+    return password.toString();
   }
 
   /** Hash password with salt using SHA-256. */
