@@ -4,8 +4,7 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 /**
- * Immutable configuration value object for RCON server. Use Builder pattern to
- * create instances.
+ * Immutable configuration value object for RCON server. Use Builder pattern to create instances.
  */
 public class RconConfig {
 
@@ -15,8 +14,7 @@ public class RconConfig {
   private final int maxFrameSize;
   private final int readTimeoutMs;
   private final int connectionTimeoutMs;
-  @Nullable
-  private final String passwordHash;
+  @Nullable private final String passwordHash;
 
   // Private constructor - use Builder
   private RconConfig(
@@ -32,8 +30,7 @@ public class RconConfig {
       throw new IllegalArgumentException("host must be non-null and non-empty");
     }
     if (host.length() > RconConstants.MAX_HOST_LENGTH) {
-      throw new IllegalArgumentException(
-          "host length must be <= " + RconConstants.MAX_HOST_LENGTH);
+      throw new IllegalArgumentException("host length must be <= " + RconConstants.MAX_HOST_LENGTH);
     }
     if (port < RconConstants.MIN_PORT || port > RconConstants.MAX_PORT) {
       throw new IllegalArgumentException(
@@ -152,11 +149,9 @@ public class RconConfig {
     private int maxFrameSize = RconConstants.DEFAULT_MAX_FRAME_SIZE;
     private int readTimeoutMs = RconConstants.DEFAULT_READ_TIMEOUT_MS;
     private int connectionTimeoutMs = RconConstants.DEFAULT_CONNECTION_TIMEOUT_MS;
-    @Nullable
-    private String passwordHash = null;
+    @Nullable private String passwordHash = null;
 
-    private Builder() {
-    }
+    private Builder() {}
 
     @Nonnull
     public Builder host(@Nonnull String host) {

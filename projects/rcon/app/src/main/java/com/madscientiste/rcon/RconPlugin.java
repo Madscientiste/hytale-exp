@@ -1,20 +1,17 @@
 package com.madscientiste.rcon;
 
-import java.nio.file.Path;
-import java.util.logging.Level;
-
-import javax.annotation.Nonnull;
-
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.JavaPluginInit;
 import com.madscientiste.rcon.infrastructure.AuthenticationService;
 import com.madscientiste.rcon.infrastructure.ConfigLoader;
 import com.madscientiste.rcon.infrastructure.RconConfig;
 import com.madscientiste.rcon.infrastructure.RconConstants;
+import java.nio.file.Path;
+import java.util.logging.Level;
+import javax.annotation.Nonnull;
 
 /**
- * Hytale plugin wrapper for RCON server. Integrates RconServer into the Hytale
- * plugin lifecycle.
+ * Hytale plugin wrapper for RCON server. Integrates RconServer into the Hytale plugin lifecycle.
  * Supports hot reloading through proper instance management and cleanup.
  */
 public class RconPlugin extends JavaPlugin {
@@ -23,8 +20,7 @@ public class RconPlugin extends JavaPlugin {
   private RconServer rconServer;
 
   /**
-   * Get the current plugin instance. Safe for hot reload: instance is refreshed
-   * on reload.
+   * Get the current plugin instance. Safe for hot reload: instance is refreshed on reload.
    *
    * @return The current plugin instance, or null if not initialized
    */
@@ -105,8 +101,7 @@ public class RconPlugin extends JavaPlugin {
   }
 
   /**
-   * Get the RCON server instance. Useful for accessing server stats or
-   * configuration.
+   * Get the RCON server instance. Useful for accessing server stats or configuration.
    *
    * @return The RCON server instance, or null if not initialized
    */

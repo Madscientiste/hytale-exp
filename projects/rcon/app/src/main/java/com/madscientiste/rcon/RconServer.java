@@ -7,10 +7,7 @@ import com.madscientiste.rcon.infrastructure.RconLogger;
 import com.madscientiste.rcon.protocol.RconProtocol;
 import com.madscientiste.rcon.transport.RconTransport;
 
-/**
- * Main RCON server - ties together all layers. This is the entry point and
- * lifecycle manager.
- */
+/** Main RCON server - ties together all layers. This is the entry point and lifecycle manager. */
 public class RconServer {
 
   private final RconConfig config;

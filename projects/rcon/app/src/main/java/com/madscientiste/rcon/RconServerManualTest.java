@@ -3,8 +3,7 @@ package com.madscientiste.rcon;
 import com.madscientiste.rcon.infrastructure.RconConfig;
 
 /**
- * Simple manual test to validate the RCON server works. Run this class manually
- * to test the server.
+ * Simple manual test to validate the RCON server works. Run this class manually to test the server.
  */
 public class RconServerManualTest {
 

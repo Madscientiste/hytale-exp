@@ -1,14 +1,13 @@
 package com.madscientiste.rcon.application;
 
-import java.io.IOException;
-import java.net.Socket;
-
 import com.madscientiste.rcon.RconServer;
 import com.madscientiste.rcon.infrastructure.AuthenticationService;
 import com.madscientiste.rcon.infrastructure.RconConfig;
 import com.madscientiste.rcon.infrastructure.RconConstants;
 import com.madscientiste.rcon.protocol.ProtocolException;
 import com.madscientiste.rcon.protocol.RconPacket;
+import java.io.IOException;
+import java.net.Socket;
 
 /** Shared test utilities for RCON integration tests. */
 public class RconTestHelpers {
@@ -16,15 +15,16 @@ public class RconTestHelpers {
   /** Create a test server with password authentication. */
   public static RconServer createServerWithPassword(String password, int port) throws Exception {
     String passwordHash = AuthenticationService.hashPassword(password);
-    RconConfig config = RconConfig.builder()
-        .host(RconConstants.TEST_HOST)
-        .port(port)
-        .maxConnections(RconConstants.DEFAULT_MAX_CONNECTIONS)
-        .maxFrameSize(RconConstants.DEFAULT_MAX_FRAME_SIZE)
-        .readTimeoutMs(RconConstants.DEFAULT_CONNECTION_TIMEOUT_MS)
-        .connectionTimeoutMs(RconConstants.DEFAULT_CONNECTION_TIMEOUT_MS)
-        .passwordHash(passwordHash)
-        .build();
+    RconConfig config =
+        RconConfig.builder()
+            .host(RconConstants.TEST_HOST)
+            .port(port)
+            .maxConnections(RconConstants.DEFAULT_MAX_CONNECTIONS)
+            .maxFrameSize(RconConstants.DEFAULT_MAX_FRAME_SIZE)
+            .readTimeoutMs(RconConstants.DEFAULT_CONNECTION_TIMEOUT_MS)
+            .connectionTimeoutMs(RconConstants.DEFAULT_CONNECTION_TIMEOUT_MS)
+            .passwordHash(passwordHash)
+            .build();
     RconServer server = new RconServer(config);
     server.start();
     return server;
@@ -32,15 +32,16 @@ public class RconTestHelpers {
 
   /** Create a test server without password (insecure mode for tests). */
   public static RconServer createServerWithoutPassword(int port) throws Exception {
-    RconConfig config = RconConfig.builder()
-        .host(RconConstants.TEST_HOST)
-        .port(port)
-        .maxConnections(RconConstants.DEFAULT_MAX_CONNECTIONS)
-        .maxFrameSize(RconConstants.DEFAULT_MAX_FRAME_SIZE)
-        .readTimeoutMs(RconConstants.DEFAULT_CONNECTION_TIMEOUT_MS)
-        .connectionTimeoutMs(RconConstants.DEFAULT_CONNECTION_TIMEOUT_MS)
-        .passwordHash(null)
-        .build();
+    RconConfig config =
+        RconConfig.builder()
+            .host(RconConstants.TEST_HOST)
+            .port(port)
+            .maxConnections(RconConstants.DEFAULT_MAX_CONNECTIONS)
+            .maxFrameSize(RconConstants.DEFAULT_MAX_FRAME_SIZE)
+            .readTimeoutMs(RconConstants.DEFAULT_CONNECTION_TIMEOUT_MS)
+            .connectionTimeoutMs(RconConstants.DEFAULT_CONNECTION_TIMEOUT_MS)
+            .passwordHash(null)
+            .build();
     RconServer server = new RconServer(config);
     server.start();
     return server;
@@ -73,15 +74,15 @@ public class RconTestHelpers {
     int bytesRead = 0;
     while (bytesRead < 4) {
       int read = socket.getInputStream().read(sizeBytes, bytesRead, 4 - bytesRead);
-      if (read == -1)
-        throw new IOException("Connection closed");
+      if (read == -1) throw new IOException("Connection closed");
       bytesRead += read;
     }
 
-    int size = (sizeBytes[0] & 0xFF)
-        | ((sizeBytes[1] & 0xFF) << 8)
-        | ((sizeBytes[2] & 0xFF) << 16)
-        | ((sizeBytes[3] & 0xFF) << 24);
+    int size =
+        (sizeBytes[0] & 0xFF)
+            | ((sizeBytes[1] & 0xFF) << 8)
+            | ((sizeBytes[2] & 0xFF) << 16)
+            | ((sizeBytes[3] & 0xFF) << 24);
 
     // Read the rest of the packet
     byte[] packetData = new byte[4 + size];
@@ -90,8 +91,7 @@ public class RconTestHelpers {
     bytesRead = 0;
     while (bytesRead < size) {
       int read = socket.getInputStream().read(packetData, 4 + bytesRead, size - bytesRead);
-      if (read == -1)
-        throw new IOException("Connection closed");
+      if (read == -1) throw new IOException("Connection closed");
       bytesRead += read;
     }
 
@@ -161,10 +161,7 @@ public class RconTestHelpers {
     }
   }
 
-  /**
-   * Send command and assert it's rejected (connection should close or return
-   * error).
-   */
+  /** Send command and assert it's rejected (connection should close or return error). */
   public static void assertCommandRejected(Socket socket, String command) throws IOException {
     RconPacket commandPacket = new RconPacket(200, RconPacket.SERVERDATA_EXECCOMMAND, command);
     sendPacket(socket, commandPacket);
