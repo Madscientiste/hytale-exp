@@ -14,7 +14,7 @@ The RCON plugin provides remote console access to your Hytale server using the s
 - **Remote Console Access**: Execute Hytale server commands remotely via RCON protocol
 - **Password Authentication**: Secure password-based authentication using SHA-256 hashing with salt
 - **Hytale Command Integration**: All Hytale server commands are available through RCON
-- **Configurable**: Easy setup through server configuration file
+- **Configurable**: Easy setup through dedicated config file with auto-password generation
 - **Connection Management**: Configurable connection limits and timeouts
 - **Protocol Compliance**: Full RCON protocol implementation with proper framing and error handling
 - **Security Hardened**: Comprehensive security fixes including integer overflow protection, TCP fragmentation handling, and state isolation
@@ -23,26 +23,28 @@ The RCON plugin provides remote console access to your Hytale server using the s
 
 1. **Download and add the plugin**: Download the latest release from the [Releases](https://github.com/Madscientiste/hytale-exp/releases) tab. Place the `rcon-x.x.x.jar` file in your server's `mods/` directory.
 
-2. **Configure in `config.json`**: Add the RCON configuration to your server's `config.json` file in the `Mods` section:
+2. **First-time setup**: On first start, the plugin will automatically:
+   - Create a configuration file at `configs/com.madscientiste.rcon.json`
+   - Generate a secure random password
+   - Log the generated password prominently in the server console
+
+   **Important**: Save the auto-generated password immediately! It will not be shown again.
+
+3. **configuration**: If you want to customize settings or set your own password, edit `configs/com.madscientiste.rcon.json`:
 
 ```json
 {
-  ...other server stuff
-  "Mods": {
-    "com.madscientiste.rcon:Rcon": {
-      "host": "127.0.0.1",
-      "port": 25575,
-      "maxConnections": 10,
-      "maxFrameSize": 4096,
-      "readTimeoutMs": 30000,
-      "connectionTimeoutMs": 5000,
-      "passwordHash": "base64salt:base64hash"
-    }
-  }
+  "host": "127.0.0.1",
+  "port": 25575,
+  "maxConnections": 10,
+  "maxFrameSize": 4096,
+  "readTimeoutMs": 30000,
+  "connectionTimeoutMs": 5000,
+  "passwordHash": "base64salt:base64hash"
 }
 ```
 
-3. **Generate Password Hash**: Generate a password hash using one of the following methods:
+4. **Generate Password Hash** (if setting password manually): Generate a password hash using one of the following methods:
 
 **Using Make (Recommended for developers)**
 ```bash
@@ -59,20 +61,16 @@ java -cp .server/mods/Rcon-1.0.0.jar com.madscientiste.rcon.infrastructure.Authe
 $ make password PASSWORD=MySecurePassword123
 Generating password hash...
 Password hash: dGhpc2lzYXNsdA==:YW5kdGhpc2lzdGhlcGFzc3dvcmRoYXNo
-Add this to your config.json:
+Add this to your configs/com.madscientiste.rcon.json:
   "passwordHash": "dGhpc2lzYXNsdA==:YW5kdGhpc2lzdGhlcGFzc3dvcmRoYXNo"
 Password hash generated
 ```
 
-The utility will output a hash in the format `base64salt:base64hash`. Copy this value to the `passwordHash` field in your config.
+The utility will output a hash in the format `base64salt:base64hash`. Copy this value to the `passwordHash` field in your `configs/com.madscientiste.rcon.json` file.
 
 **Note**: If `passwordHash` is omitted or set to `null`, the server will run in insecure mode (no authentication required). This is only recommended for local development/testing.
 
-> [!NOTE]
-> For none devs, i'll figure out a better way to setup the password hash. Soon.
->
-
-4. **Configuration Options**:
+5. **Configuration Options**:
    - `host`: The IP address to bind the RCON server to (default: `127.0.0.1`)
    - `port`: The port to listen on (default: `25575`)
    - `maxConnections`: Maximum number of concurrent RCON connections (default: `10`)
@@ -81,7 +79,7 @@ The utility will output a hash in the format `base64salt:base64hash`. Copy this 
    - `connectionTimeoutMs`: Connection timeout in milliseconds (default: `5000`)
    - `passwordHash`: Password hash in format `base64salt:base64hash` (optional, but **highly recommended**)
 
-5. **Start your server**: The RCON server will automatically start when the plugin loads. You should see a log message indicating the RCON server has started on the configured host and port.
+6. **Start your server**: The RCON server will automatically start when the plugin loads. You should see a log message indicating the RCON server has started on the configured host and port. If this is the first start, you'll also see the auto-generated password.
 
 ### Usage
 
@@ -98,14 +96,19 @@ Once configured, you can connect to the RCON server using any RCON-compatible cl
 > RCON provides console-level access to your server. Follow these guidelines:
 >
 > **Authentication:**
+> - The plugin auto-generates a secure password on first start. Save this password immediately!
 > - Always configure `passwordHash` for production use. Without it, anyone can connect and execute commands.
-> - Use strong passwords and keep your `config.json` file secure (it contains the password hash).
-> - The plugin uses SHA-256 with salt. 
+> - Use strong passwords and keep your `configs/com.madscientiste.rcon.json` file secure (it contains the password hash).
+> - The plugin uses SHA-256 with salt for password hashing. 
 >
 > **Network Exposure:**
 > - Keep `host` set to `127.0.0.1` (localhost) when possible for local-only access.
 > - If exposing RCON over the network, use firewall IP whitelisting to restrict access to trusted IP addresses.
 > - Do not expose the RCON port to the public internet unless absolutely necessary.
+>
+> **Config File Location:**
+> - Configuration is stored in `configs/com.madscientiste.rcon.json` (relative to server root).
+> - This file is separate from the main `config.json` for better organization and security.
 
 > [!NOTE]
 > **Security Implementation**
