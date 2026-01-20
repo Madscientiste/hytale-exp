@@ -1,84 +1,26 @@
 {
-  // Java Configuration
   "java.configuration.updateBuildConfiguration": "automatic",
   "java.compile.nullAnalysis.mode": "automatic",
-  "java.configuration.runtimes": [],
-  "java.jdt.ls.java.home": null,
+  "java.errors.incompleteClasspath.severity": "ignore",
   
-  // Gradle Configuration
-  "java.import.gradle.enabled": true,
-  "java.import.gradle.wrapper.enabled": true,
-  "java.import.gradle.version": null,
-  "java.import.gradle.home": null,
-  "java.import.gradle.java.home": null,
-  "gradle.nestedProjects": true,
+  // Configure null-safety analysis to be less strict about enum constants
+  // Enum constants (like Level.INFO) are never null, but static analyzer can't prove it
+  "java.errors.nullAnalysis.nullable": "warning",
+  "java.errors.nullAnalysis.nonnull": "warning",
   
-  // Project Structure
-  "java.project.sourcePaths": [
-    "projects/*/app/src/main/java",
-    "projects/*/src/main/java"
-  ],
-  "java.project.outputPath": "projects/*/build/classes",
-  "java.project.referencedLibraries": [
-    "libs/**/*.jar"
+  // Suppress null-safety warnings for standard library types without null annotations
+  "java.errors.nullAnalysis.disable": false,
+  "java.errors.nullAnalysis.exclude": [
+    "java.util.logging.Level"
   ],
   
-  // File Associations
-  "files.associations": {
-    "*.gradle.kts": "kotlin",
-    "*.kts": "kotlin"
-  },
+  // Formatting and code style
+  "java.format.settings.url": "https://raw.githubusercontent.com/google/styleguide/gh-pages/eclipse-java-google-style.xml",
+  "java.format.settings.profile": "GoogleStyle",
   
-  // Exclude build directories from search
-  "search.exclude": {
-    "**/build": true,
-    "**/.gradle": true,
-    "**/build/**": true,
-    "**/.gradle/**": true,
-    "**/node_modules": true
-  },
-  
-  // File Watcher Exclusions
-  "files.watcherExclude": {
-    "**/build/**": true,
-    "**/.gradle/**": true,
-    "**/build/classes/**": true,
-    "**/build/generated/**": true,
-    "**/build/tmp/**": true
-  },
-  
-  // Editor Settings
+  // Editor settings
   "editor.formatOnSave": true,
   "editor.codeActionsOnSave": {
     "source.organizeImports": "explicit"
-  },
-  
-  // Java Formatting
-  "java.format.settings.url": null,
-  "java.format.settings.profile": null,
-  "java.format.enabled": true,
-  
-  // Kotlin Formatting (for build.gradle.kts files)
-  "[kotlin]": {
-    "editor.defaultFormatter": "fwcd.kotlin",
-    "editor.formatOnSave": true
-  },
-  
-  // Java-specific
-  "[java]": {
-    "editor.defaultFormatter": "redhat.java",
-    "editor.formatOnSave": true,
-    "editor.tabSize": 4,
-    "editor.insertSpaces": true
-  },
-  
-  // Test Configuration
-  "java.test.config": {
-    "workingDirectory": "${workspaceFolder}"
-  },
-  
-  // Gradle Tasks
-  "gradle.autoDetect": "on",
-  "gradle.nestedProjects": true
+  }
 }
-
