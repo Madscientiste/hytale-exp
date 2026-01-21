@@ -3,61 +3,57 @@ package com.madscientiste.rcon.application;
 import com.madscientiste.rcon.command.CommandDispatcher;
 import com.madscientiste.rcon.infrastructure.AuthenticationService;
 import com.madscientiste.rcon.infrastructure.RconConfig;
-import com.madscientiste.rcon.infrastructure.RconLogger;
+import com.madscientiste.rcon.infrastructure.RconConstants;
+import com.madscientiste.rcon.logging.LogEvent;
+import com.madscientiste.rcon.logging.RconLogger;
 import com.madscientiste.rcon.protocol.ConnectionState;
 import com.madscientiste.rcon.protocol.RconPacket;
 import com.madscientiste.rcon.protocol.RconProtocol;
 import com.madscientiste.rcon.transport.RconTransport;
 import com.madscientiste.rcon.transport.TransportCallbacks;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * Application layer - thin coordinator between transport, protocol, and command layers. Glue
- * protocol ↔ execution, connection-scoped state, routing messages to handlers.
- */
 public class RconApplication implements TransportCallbacks {
 
   private final RconTransport transport;
   private final RconProtocol protocol;
   private final CommandDispatcher commandDispatcher;
-  private final RconLogger logger;
+
+  private final RconLogger logger = RconLogger.createPluginLogger(RconConstants.LOGGER_APPLICATION);
+
   private final RconConfig config;
 
-  // Per-connection state (connection-scoped, not session-scoped)
   private final ConcurrentHashMap<String, ConnectionState> connectionStates =
+      new ConcurrentHashMap<>();
+  private final ConcurrentHashMap<String, Long> sessionStartTimes = new ConcurrentHashMap<>();
+  private final ConcurrentHashMap<String, AtomicInteger> sessionCommandCounts =
       new ConcurrentHashMap<>();
 
   public RconApplication(
       RconTransport transport,
       RconProtocol protocol,
       CommandDispatcher commandDispatcher,
-      RconLogger logger,
       RconConfig config) {
     this.transport = transport;
     this.protocol = protocol;
     this.commandDispatcher = commandDispatcher;
-    this.logger = logger;
     this.config = config;
   }
 
-  /** Start the application layer. */
   public void start() throws Exception {
     transport.start();
-    logger.logEvent("APP_STARTED", "system", java.util.Map.of("transport", "started"));
+    logger.atInfo().log("Application started: transport layer ready");
   }
 
-  /** Stop the application layer. */
   public void stop() {
     transport.stop();
-    logger.logEvent("APP_STOPPED", "system", java.util.Map.of("transport", "stopped"));
+    logger.atInfo().log("Application stopped");
   }
-
-  // TransportCallbacks implementation
 
   @Override
   public void onBytesReceived(String connectionId, byte[] data) {
     try {
-      // Parse bytes using protocol layer
       RconProtocol.ProtocolResult result = protocol.parseBytes(connectionId, data);
 
       if (result instanceof RconProtocol.ProtocolSuccess success) {
@@ -67,46 +63,62 @@ public class RconApplication implements TransportCallbacks {
       }
 
     } catch (Exception e) {
-      // Never crash - isolate to connection
-      logger.logError("Error processing bytes for " + connectionId, e);
+      logger
+          .event(LogEvent.APPLICATION_ERROR)
+          .withParam("error_code", "byte_processing_failure")
+          .withParam("message", "Error processing bytes")
+          .withOptionalParam("connection_id", connectionId)
+          .withCause(e)
+          .log();
       closeConnection(connectionId, "Processing error");
     }
   }
 
   @Override
   public void onConnectionClosed(String connectionId, String reason) {
-    // Clean up connection state (connection-scoped, not session-scoped)
     ConnectionState state = connectionStates.remove(connectionId);
+    sessionStartTimes.remove(connectionId);
+    AtomicInteger commandCount = sessionCommandCounts.remove(connectionId);
+
     if (state != null) {
       state.close();
     }
 
-    logger.logConnectionClosed(connectionId, reason);
+    int commandsExecuted = commandCount != null ? commandCount.get() : 0;
+    logger
+        .event(LogEvent.APPLICATION_SESSION_END)
+        .withParam("connection_id", connectionId)
+        .withParam("reason", reason)
+        .withOptionalParam("commands_executed", commandsExecuted > 0 ? commandsExecuted : null)
+        .log();
   }
 
-  // Private methods
-
-  /** Handle parsed packets from protocol layer. */
   private void handlePackets(String connectionId, java.util.List<RconPacket> packets)
       throws Exception {
     ConnectionState state =
         connectionStates.computeIfAbsent(connectionId, k -> new ConnectionState());
 
     for (RconPacket packet : packets) {
-      // Process state transition
       ConnectionState.TransitionResult transition = state.processPacket(packet);
 
       if (!transition.isSuccess()) {
-        logger.logProtocolViolation(connectionId, transition.getMessage());
+        logger
+            .event(LogEvent.PROTOCOL_PACKET_INVALID)
+            .withParam("violation_type", "state_machine_violation")
+            .withParam("connection_id", connectionId)
+            .withParam("message", transition.getMessage())
+            .log();
         closeConnection(connectionId, "Protocol violation");
         return;
       }
 
-      // Handle packet based on type and state
       if (packet.getType() == RconPacket.SERVERDATA_AUTH) {
-        // Reject re-authentication attempts
         if (state.isReadyForCommand()) {
-          logger.logProtocolViolation(connectionId, "Re-authentication not allowed");
+          logger
+              .event(LogEvent.PROTOCOL_PACKET_INVALID)
+              .withParam("violation_type", "re_authentication_not_allowed")
+              .withParam("connection_id", connectionId)
+              .log();
           closeConnection(connectionId, "Re-authentication not allowed");
           return;
         }
@@ -115,76 +127,164 @@ public class RconApplication implements TransportCallbacks {
           && state.isReadyForCommand()) {
         handleCommandPacket(connectionId, packet);
       } else if (packet.getType() == RconPacket.SERVERDATA_RESPONSE_VALUE) {
-        // Response to previous command - just acknowledge
-        logger.logDebug(connectionId, "Response received");
+        // Fine detail logging - not a structured event
+        logger.atFine().log("Response received for connection: %s", connectionId);
       }
     }
   }
 
-  /** Handle authentication packet with password validation. */
   private void handleAuthPacket(String connectionId, RconPacket packet, ConnectionState state)
       throws Exception {
     int responseId = packet.getId();
     String providedPassword = packet.getBody();
     boolean authSuccess = false;
 
-    // If no password is configured, allow authentication (backward compatibility
-    // for development/testing)
     if (!config.requiresPassword()) {
       authSuccess = true;
-      logger.logDebug(connectionId, "Auth accepted: no password configured (insecure mode)");
+      logger
+          .event(LogEvent.PROTOCOL_AUTH)
+          .withParam("connection_id", connectionId)
+          .withParam("result", "success")
+          .withOptionalParam("failure_reason", "no_password_configured")
+          .atLevel(java.util.logging.Level.WARNING)
+          .log();
     } else {
-      // Validate password
       String storedHash = config.getPasswordHash();
       if (storedHash != null && !storedHash.isEmpty()) {
         authSuccess = AuthenticationService.verifyPassword(providedPassword, storedHash);
       }
     }
 
-    // Send auth response
     RconPacket response = protocol.createAuthResponse(responseId, authSuccess);
     byte[] responseData = protocol.formatPacket(response);
     transport.send(connectionId, responseData);
 
     if (authSuccess) {
-      // Mark connection as authenticated after sending response
       state.markAuthenticated();
-      logger.logEvent("AUTH_SUCCESS", connectionId, java.util.Map.of("requestId", responseId));
+      sessionStartTimes.put(connectionId, System.currentTimeMillis());
+      sessionCommandCounts.put(connectionId, new AtomicInteger(0));
+
+      logger
+          .event(LogEvent.APPLICATION_SESSION_START)
+          .withParam("connection_id", connectionId)
+          .withParam("authenticated", true)
+          .log();
+
+      logger
+          .event(LogEvent.PROTOCOL_AUTH)
+          .withParam("connection_id", connectionId)
+          .withParam("result", "success")
+          .log();
     } else {
-      logger.logEvent("AUTH_FAILURE", connectionId, java.util.Map.of("requestId", responseId));
+      logger
+          .event(LogEvent.PROTOCOL_AUTH)
+          .withParam("connection_id", connectionId)
+          .withParam("result", "failure")
+          .withOptionalParam("failure_reason", "invalid_password")
+          .atLevel(java.util.logging.Level.WARNING)
+          .log();
       closeConnection(connectionId, "Authentication failed");
     }
   }
 
-  /** Handle command execution packet (MVP: echo). */
   private void handleCommandPacket(String connectionId, RconPacket packet) throws Exception {
-    String command = packet.getBody();
-    String response = commandDispatcher.execute(command);
+    String commandLine = packet.getBody();
+    String commandName = extractCommandName(commandLine);
+
+    long startTime = System.currentTimeMillis();
+    String response;
+    String errorCode = null;
+
+    try {
+      response = commandDispatcher.execute(commandLine);
+    } catch (Exception e) {
+      errorCode = e.getClass().getSimpleName();
+      logger
+          .event(LogEvent.COMMAND_ERROR)
+          .withParam("connection_id", connectionId)
+          .withParam("command_name", commandName)
+          .withParam("error_code", errorCode)
+          .withCause(e)
+          .log();
+      throw e;
+    }
+
+    long executionTime = System.currentTimeMillis() - startTime;
 
     RconPacket responsePacket = protocol.createCommandResponse(packet.getId(), response);
     byte[] responseData = protocol.formatPacket(responsePacket);
     transport.send(connectionId, responseData);
 
-    logger.logDebug(connectionId, "Command executed: " + command);
+    // Increment command count for session
+    AtomicInteger commandCount = sessionCommandCounts.get(connectionId);
+    if (commandCount != null) {
+      commandCount.incrementAndGet();
+    }
+
+    // Log command execution
+    RconLogger commandLogger = RconLogger.createPluginLogger(RconConstants.LOGGER_COMMAND);
+    commandLogger
+        .event(LogEvent.COMMAND_EXECUTE)
+        .withParam("connection_id", connectionId)
+        .withParam("command_name", commandName)
+        .withParam("result", "success")
+        .withOptionalParam("execution_time_ms", executionTime)
+        .log();
+
+    // Debug logging with sanitized args
+    String sanitizedArgs = sanitizeCommandArgs(commandLine);
+    commandLogger
+        .event(LogEvent.COMMAND_EXECUTE_DEBUG)
+        .withParam("connection_id", connectionId)
+        .withParam("command_name", commandName)
+        .withParam("sanitized_args", sanitizedArgs)
+        .log();
   }
 
-  /** Handle protocol parsing errors. */
+  private String extractCommandName(String commandLine) {
+    if (commandLine == null || commandLine.trim().isEmpty()) {
+      return "";
+    }
+    String[] parts = commandLine.trim().split("\\s+", 2);
+    return parts[0].toLowerCase();
+  }
+
+  private String sanitizeCommandArgs(String commandLine) {
+    if (commandLine == null || commandLine.trim().isEmpty()) {
+      return "";
+    }
+    String[] parts = commandLine.trim().split("\\s+", 2);
+    if (parts.length > 1) {
+      String args = parts[1];
+      // Sanitize any potential secrets
+      if (args.toLowerCase().contains("password")
+          || args.toLowerCase().contains("secret")
+          || args.toLowerCase().contains("token")) {
+        return "[REDACTED]";
+      }
+      return args;
+    }
+    return "";
+  }
+
   private void handleProtocolError(String connectionId, String error) {
-    logger.logProtocolViolation(connectionId, error);
+    logger
+        .event(LogEvent.PROTOCOL_PACKET_INVALID)
+        .withParam("violation_type", "parse_error")
+        .withParam("connection_id", connectionId)
+        .withParam("message", error)
+        .log();
     closeConnection(connectionId, "Protocol error");
   }
 
-  /** Close a connection. */
   private void closeConnection(String connectionId, String reason) {
     transport.closeConnection(connectionId, reason);
   }
 
-  /** Get application statistics. */
   public ApplicationStats getStats() {
     return new ApplicationStats(transport.getConnectionCount(), connectionStates.size());
   }
 
-  /** Application statistics. */
   public static class ApplicationStats {
     public final int connectionCount;
     public final int connectionStateCount;

@@ -1,62 +1,62 @@
 package com.madscientiste.rcon;
 
 import com.madscientiste.rcon.infrastructure.RconConfig;
+import com.madscientiste.rcon.infrastructure.RconConstants;
+import com.madscientiste.rcon.logging.LogEvent;
+import com.madscientiste.rcon.logging.RconLogger;
 
-/**
- * Simple manual test to validate the RCON server works. Run this class manually to test the server.
- */
 public class RconServerManualTest {
 
   public static void main(String[] args) {
+    RconConfig config = RconConfig.builder().build();
+    RconLogger logger = RconLogger.createPluginLogger(RconConstants.LOGGER_APPLICATION);
+    RconServer server = new RconServer(config);
+
+    Runtime.getRuntime()
+        .addShutdownHook(
+            new Thread(
+                () -> {
+                  logger.atInfo().log("Shutting down server...");
+                  server.stop();
+                }));
+
     try {
-      // Create server with default config
-      RconConfig config = RconConfig.builder().build();
-      RconServer server = new RconServer(config);
-
-      // Add shutdown hook
-      Runtime.getRuntime()
-          .addShutdownHook(
-              new Thread(
-                  () -> {
-                    System.out.println("Shutting down server...");
-                    server.stop();
-                  }));
-
-      // Start server
       server.start();
 
-      System.out.println("RCON server started on " + config.getHost() + ":" + config.getPort());
-      System.out.println("Architecture layers:");
-      System.out.println("  Transport: TCP server with connection management");
-      System.out.println("  Protocol: RCON packet parsing and state machine");
-      System.out.println("  Application: Coordinated between layers");
-      System.out.println("  Command: Simple echo implementation");
-      System.out.println();
-      System.out.println("Testing with RCON client should show:");
-      System.out.println("  1. Authentication succeeds (MVP: no password)");
-      System.out.println("  2. Commands echo back input");
-      System.out.println("  3. Multiple packets work correctly");
-      System.out.println("  4. Server stays responsive");
-      System.out.println();
-      System.out.println("Press Ctrl+C to stop...");
+      logger.atInfo().log("RCON server started on %s:%d", config.getHost(), config.getPort());
+      logger.atInfo().log("Architecture layers:");
+      logger.atInfo().log("  Transport: TCP server with connection management");
+      logger.atInfo().log("  Protocol: RCON packet parsing and state machine");
+      logger.atInfo().log("  Application: Coordinated between layers");
+      logger.atInfo().log("  Command: Simple echo implementation");
+      logger.atInfo().log("");
+      logger.atInfo().log("Testing with RCON client should show:");
+      logger.atInfo().log("  1. Authentication succeeds (MVP: no password)");
+      logger.atInfo().log("  2. Commands echo back input");
+      logger.atInfo().log("  3. Multiple packets work correctly");
+      logger.atInfo().log("  4. Server stays responsive");
+      logger.atInfo().log("");
+      logger.atInfo().log("Press Ctrl+C to stop...");
 
-      // Keep running
       while (server.isRunning()) {
         try {
           Thread.sleep(1000);
-
-          // Print stats every 30 seconds
           var stats = server.getStats();
-          System.out.println("\rActive connections: " + stats.connectionCount);
-
+          logger.atInfo().log("\rActive connections: %d", stats.connectionCount);
         } catch (InterruptedException e) {
           break;
         }
       }
 
     } catch (Exception e) {
-      System.err.println("Server error: " + e.getMessage());
-      e.printStackTrace();
+      logger
+          .event(LogEvent.APPLICATION_ERROR)
+          .withParam("error_code", "server_error")
+          .withParam("message", "Server error")
+          .withCause(e)
+          .log();
+    } finally {
+      server.stop();
     }
   }
 }

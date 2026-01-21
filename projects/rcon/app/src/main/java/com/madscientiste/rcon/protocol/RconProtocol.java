@@ -1,33 +1,22 @@
 package com.madscientiste.rcon.protocol;
 
-import com.madscientiste.rcon.infrastructure.RconLogger;
+import com.madscientiste.rcon.infrastructure.RconConstants;
+import com.madscientiste.rcon.logging.LogEvent;
+import com.madscientiste.rcon.logging.RconLogger;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Main protocol handler - pure parsing and validation logic. Input: bytes, Output: messages OR
- * protocol errors
- */
 public class RconProtocol {
 
   public static final int MAX_FRAME_SIZE = 4096;
   public static final int HEADER_SIZE = 4;
 
-  private final RconLogger logger;
+  private final RconLogger logger = RconLogger.createPluginLogger(RconConstants.LOGGER_PROTOCOL);
 
-  public RconProtocol(RconLogger logger) {
-    this.logger = logger;
-  }
+  public RconProtocol() {}
 
-  /**
-   * Parses incoming bytes into RCON packets.
-   *
-   * @param data Raw bytes from transport layer
-   * @return ProtocolResult containing parsed packets or error
-   */
   public ProtocolResult parseBytes(String connectionId, byte[] data) {
     try {
-      // Basic size validation
       if (data.length > MAX_FRAME_SIZE) {
         return new ProtocolError("Frame too large: " + data.length + " > " + MAX_FRAME_SIZE);
       }
@@ -36,27 +25,20 @@ public class RconProtocol {
         return new ProtocolError("Frame too small: " + data.length + " < " + HEADER_SIZE);
       }
 
-      // Parse length-prefixed packets
       List<RconPacket> packets = new ArrayList<>();
       int offset = 0;
 
       while (offset < data.length) {
-        // Read packet size
         int packetSize = readIntLittleEndian(data, offset);
 
-        // RCON standard minimum: 4 (id) + 4 (type) + 0 (body) + 1 (body_null) + 1
-        // (padding_null) = 10 bytes
         if (packetSize < 10 || packetSize > MAX_FRAME_SIZE) {
           return new ProtocolError("Invalid packet size: " + packetSize);
         }
 
-        // Check for integer overflow before arithmetic
-        // If offset + HEADER_SIZE + packetSize would overflow, reject
         if (offset > Integer.MAX_VALUE - HEADER_SIZE - packetSize) {
           return new ProtocolError("Invalid packet size or overflow");
         }
 
-        // Check if we have enough data for complete packet
         if (offset + HEADER_SIZE + packetSize > data.length) {
           return new ProtocolError(
               "Incomplete packet: need "
@@ -65,7 +47,6 @@ public class RconProtocol {
                   + data.length);
         }
 
-        // Extract packet data
         byte[] packetData = new byte[HEADER_SIZE + packetSize];
         System.arraycopy(data, offset, packetData, 0, packetData.length);
 
@@ -73,17 +54,26 @@ public class RconProtocol {
           RconPacket packet = RconPacket.fromBytes(packetData);
           packets.add(packet);
 
-          logger.logPacketReceived(
-              connectionId, packet.getId(), packet.getType(), packet.getBody().length());
+          // Fine detail logging - not a structured event, just debug info
+          logger.atFine().log(
+              "Packet received: id=%d, type=%d, bodyLength=%d",
+              packet.getId(), packet.getType(), packet.getBody().length());
 
           offset += packetData.length;
 
-          // Skip potential padding between packets
           while (offset < data.length && data[offset] == 0) {
             offset++;
           }
 
         } catch (ProtocolException e) {
+          // Log protocol error for packet parsing failure
+          logger
+              .event(LogEvent.PROTOCOL_ERROR)
+              .withParam("error_code", "packet_parsing_failed")
+              .withParam("message", "Packet parsing failed: " + e.getMessage())
+              .withOptionalParam("connection_id", connectionId)
+              .withCause(e)
+              .log();
           return new ProtocolError("Packet parsing failed: " + e.getMessage());
         }
       }
@@ -99,30 +89,24 @@ public class RconProtocol {
     }
   }
 
-  /**
-   * Formats packet into bytes for transmission.
-   *
-   * @param packet Packet to format
-   * @return Byte array ready for transport layer
-   */
   public byte[] formatPacket(RconPacket packet) {
     byte[] data = packet.toBytes();
 
-    // Enforce size limits
     if (data.length > MAX_FRAME_SIZE) {
       throw new RuntimeException("Packet too large: " + data.length);
     }
 
-    logger.logPacketSent("unknown", packet.getId(), packet.getType(), packet.getBody().length());
+    // Fine detail logging - not a structured event, just debug info
+    logger.atFine().log(
+        "Packet sent: id=%d, type=%d, bodyLength=%d",
+        packet.getId(), packet.getType(), packet.getBody().length());
     return data;
   }
 
-  /** Creates authentication response packet. */
   public RconPacket createAuthResponse(int requestId, boolean success) {
     return new RconPacket(requestId, RconPacket.SERVERDATA_AUTH_RESPONSE, success ? "1" : "-1");
   }
 
-  /** Creates command response packet. */
   public RconPacket createCommandResponse(int requestId, String response) {
     return new RconPacket(requestId, RconPacket.SERVERDATA_RESPONSE_VALUE, response);
   }
@@ -134,14 +118,12 @@ public class RconProtocol {
         | ((buffer[offset + 3] & 0xFF) << 24);
   }
 
-  /** Sealed interface for protocol parsing results. */
   public sealed interface ProtocolResult {
     boolean isSuccess();
 
     String getErrorMessage();
   }
 
-  /** Successful parsing result containing packets. */
   public static final class ProtocolSuccess implements ProtocolResult {
     private final List<RconPacket> packets;
 
@@ -164,7 +146,6 @@ public class RconProtocol {
     }
   }
 
-  /** Error result from protocol parsing. */
   public static final class ProtocolError implements ProtocolResult {
     private final String message;
 

@@ -111,5 +111,6 @@ public class AuthenticationService {
     System.out.println("Password hash: " + hash);
     System.out.println("Add this to your config.json:");
     System.out.println("  \"passwordHash\": \"" + hash + "\"");
+    System.out.println("Password hash generated");
   }
 }

@@ -1,5 +1,8 @@
 package com.madscientiste.rcon.transport;
 
+import com.madscientiste.rcon.infrastructure.RconConstants;
+import com.madscientiste.rcon.logging.LogEvent;
+import com.madscientiste.rcon.logging.RconLogger;
 import com.madscientiste.rcon.protocol.RconProtocol;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -19,6 +22,7 @@ public class RconConnection {
   private final AtomicBoolean closed = new AtomicBoolean(false);
   private final Semaphore inFlightFrames = new Semaphore(1);
   private final Thread readThread;
+  private final RconLogger logger = RconLogger.createPluginLogger(RconConstants.LOGGER_TRANSPORT);
 
   private volatile long lastActivity = System.currentTimeMillis();
 
@@ -70,6 +74,12 @@ public class RconConnection {
           synchronized (readBuffer) {
             // Prevent buffer from growing unbounded
             if (readBuffer.size() + bytesRead > MAX_BUFFER_SIZE) {
+              logger
+                  .event(LogEvent.TRANSPORT_ERROR)
+                  .withParam("error_type", "buffer_overflow")
+                  .withParam("message", "Read buffer overflow")
+                  .withOptionalParam("connection_id", id)
+                  .log();
               close("Read buffer overflow");
               return;
             }
@@ -84,6 +94,13 @@ public class RconConnection {
 
     } catch (Exception e) {
       if (!closed.get()) {
+        logger
+            .event(LogEvent.TRANSPORT_ERROR)
+            .withParam("error_type", "read_error")
+            .withParam("message", "Read error: " + e.getMessage())
+            .withOptionalParam("connection_id", id)
+            .withCause(e)
+            .log();
         close("Read error: " + e.getMessage());
       }
     }
@@ -106,14 +123,17 @@ public class RconConnection {
       // Read packet size (little-endian)
       int packetSize = readIntLittleEndian(bufferData, offset);
 
-      // Validate packet size
+      // Validate packet size (protocol layer should handle this, but we catch it here too)
       if (packetSize < 10 || packetSize > RconProtocol.MAX_FRAME_SIZE) {
+        // This is a protocol violation, but we're at transport layer
+        // The protocol layer will log it properly
         close("Invalid packet size: " + packetSize);
         return;
       }
 
       // Check for integer overflow
       if (offset > Integer.MAX_VALUE - HEADER_SIZE - packetSize) {
+        // Protocol violation
         close("Packet size overflow");
         return;
       }
@@ -197,7 +217,13 @@ public class RconConnection {
         }
       } catch (Exception e) {
         // Log error but don't re-throw
-        System.err.println("Error closing connection " + id + ": " + e.getMessage());
+        logger
+            .event(LogEvent.TRANSPORT_ERROR)
+            .withParam("error_type", "close_failure")
+            .withParam("message", "Error closing connection: " + e.getMessage())
+            .withOptionalParam("connection_id", id)
+            .withCause(e)
+            .log();
       }
     }
   }

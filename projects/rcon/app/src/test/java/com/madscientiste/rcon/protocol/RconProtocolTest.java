@@ -1,28 +1,25 @@
 package com.madscientiste.rcon.protocol;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
-import com.madscientiste.rcon.infrastructure.RconLogger;
 import java.util.List;
+import org.junit.Before;
 import org.junit.Test;
 
-/**
- * Tests for RconProtocol parsing and validation. Critical for security - tests edge cases and
- * malformed input.
- */
 public class RconProtocolTest {
 
   private RconProtocol protocol;
-  private RconLogger logger;
 
+  @Before
   public void setUp() {
-    logger = new RconLogger();
-    protocol = new RconProtocol(logger);
+    protocol = new RconProtocol();
   }
 
   @Test
   public void testValidPacketParsing() {
-    setUp();
     RconPacket original = new RconPacket(123, RconPacket.SERVERDATA_AUTH, "test");
     byte[] data = original.toBytes();
 
@@ -38,7 +35,6 @@ public class RconProtocolTest {
 
   @Test
   public void testMultiplePacketsInOneBuffer() {
-    setUp();
     RconPacket packet1 = new RconPacket(123, RconPacket.SERVERDATA_AUTH, "first");
     RconPacket packet2 = new RconPacket(124, RconPacket.SERVERDATA_RESPONSE_VALUE, "second");
 
@@ -60,8 +56,6 @@ public class RconProtocolTest {
 
   @Test
   public void testOversizedFrame() {
-    setUp();
-    // Create data larger than MAX_FRAME_SIZE
     byte[] oversized = new byte[RconProtocol.MAX_FRAME_SIZE + 100];
 
     RconProtocol.ProtocolResult result = protocol.parseBytes("test-conn", oversized);
@@ -73,8 +67,7 @@ public class RconProtocolTest {
 
   @Test
   public void testUndersizedFrame() {
-    setUp();
-    byte[] tooSmall = {1, 2, 3}; // Less than HEADER_SIZE
+    byte[] tooSmall = {1, 2, 3};
 
     RconProtocol.ProtocolResult result = protocol.parseBytes("test-conn", tooSmall);
 
@@ -84,13 +77,10 @@ public class RconProtocolTest {
 
   @Test
   public void testInvalidPacketSize() {
-    setUp();
-    // Create packet with invalid size field
     RconPacket packet = new RconPacket(123, RconPacket.SERVERDATA_AUTH, "test");
     byte[] data = packet.toBytes();
 
-    // Corrupt size field to invalid value
-    data[0] = (byte) 0xFF; // Huge size
+    data[0] = (byte) 0xFF;
     data[1] = (byte) 0xFF;
     data[2] = (byte) 0xFF;
     data[3] = (byte) 0xFF;
@@ -103,12 +93,9 @@ public class RconProtocolTest {
 
   @Test
   public void testIncompletePacket() {
-    setUp();
-    // Create valid packet but truncate it
     RconPacket packet = new RconPacket(123, RconPacket.SERVERDATA_AUTH, "test");
     byte[] data = packet.toBytes();
 
-    // Truncate last few bytes
     byte[] incomplete = new byte[data.length - 5];
     System.arraycopy(data, 0, incomplete, 0, incomplete.length);
 
@@ -122,8 +109,6 @@ public class RconProtocolTest {
 
   @Test
   public void testMalformedPacket() {
-    setUp();
-    // Create completely malformed data
     byte[] malformed = new byte[20];
     for (int i = 0; i < malformed.length; i++) {
       malformed[i] = (byte) (i % 256);
@@ -131,7 +116,6 @@ public class RconProtocolTest {
 
     RconProtocol.ProtocolResult result = protocol.parseBytes("test-conn", malformed);
 
-    // Should not crash - either success with valid packets or error
     assertTrue(
         "Should be either success or error",
         result.isSuccess() || result instanceof RconProtocol.ProtocolError);
@@ -139,7 +123,6 @@ public class RconProtocolTest {
 
   @Test
   public void testEmptyPayload() {
-    setUp();
     RconPacket packet = new RconPacket(123, RconPacket.SERVERDATA_AUTH, "");
     byte[] data = packet.toBytes();
 
@@ -153,7 +136,6 @@ public class RconProtocolTest {
 
   @Test
   public void testPacketFormatting() {
-    setUp();
     RconPacket packet = new RconPacket(123, RconPacket.SERVERDATA_RESPONSE_VALUE, "response");
 
     byte[] formatted = protocol.formatPacket(packet);
@@ -161,21 +143,18 @@ public class RconProtocolTest {
     assertNotNull("Should return formatted bytes", formatted);
     assertTrue("Should have data", formatted.length > 0);
 
-    // Should be able to parse it back
     RconProtocol.ProtocolResult parseResult = protocol.parseBytes("test-conn", formatted);
     assertTrue("Should be parsable", parseResult.isSuccess());
   }
 
   @Test(expected = RuntimeException.class)
   public void testFormatOversizedPacket() {
-    setUp();
-    // Create packet that will be too large when formatted
     StringBuilder hugeBody = new StringBuilder();
     for (int i = 0; i < RconProtocol.MAX_FRAME_SIZE; i++) {
       hugeBody.append("x");
     }
 
     RconPacket packet = new RconPacket(123, RconPacket.SERVERDATA_AUTH, hugeBody.toString());
-    protocol.formatPacket(packet); // Should throw exception
+    protocol.formatPacket(packet);
   }
 }

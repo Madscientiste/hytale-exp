@@ -74,6 +74,25 @@ public final class RconConstants {
   public static final String CONFIG_FILENAME = "com.madscientiste.rcon.json";
 
   // ============================================================================
+  // Logger Names (for configuration)
+  // ============================================================================
+
+  /** [RCON|P] logger name for RCON plugin */
+  public static final String LOGGER_ROOT = "Rcon";
+
+  /** [RCON|P] [TRANSPORT] Logger name for transport layer */
+  public static final String LOGGER_TRANSPORT = "Transport";
+
+  /** [RCON|P] [PROTOCOL] Logger name for protocol layer */
+  public static final String LOGGER_PROTOCOL = "Protocol";
+
+  /** [RCON|P] [APPLICATION] Logger name for application layer */
+  public static final String LOGGER_APPLICATION = "Application";
+
+  /** [RCON|P] [COMMAND] Logger name for command layer */
+  public static final String LOGGER_COMMAND = "Command";
+
+  // ============================================================================
   // Test Constants
   // ============================================================================
 
