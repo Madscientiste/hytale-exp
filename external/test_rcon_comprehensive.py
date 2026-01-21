@@ -58,14 +58,14 @@ def read_rcon_packet(sock, timeout=5):
     
     return packet_id, packet_type, body
 
-def connect_and_auth(host='127.0.0.1', port=25575):
+def connect_and_auth(host='127.0.0.1', port=25575, password='hello'):
     """Connect and authenticate"""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(10)
     sock.connect((host, port))
     time.sleep(0.1)  # Small delay for connection to stabilize
     
-    send_rcon_packet(sock, 100, SERVERDATA_AUTH, "")
+    send_rcon_packet(sock, 100, SERVERDATA_AUTH, password)
     auth_id, auth_type, auth_body = read_rcon_packet(sock)
     
     if auth_type != SERVERDATA_AUTH_RESPONSE:
