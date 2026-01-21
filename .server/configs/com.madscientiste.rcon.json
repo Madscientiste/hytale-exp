@@ -4,6 +4,6 @@
   "host": "127.0.0.1",
   "readTimeoutMs": 30000,
   "maxFrameSize": 4096,
-  "passwordHash": "bF7OkYOh8JvGr5FdR2DxYw==:bGrIBi+UDZ9pJo9075yTiTtOn4/3djfrZm+5b8lPrPM=",
+  "passwordHash": "EZ2hR8C0rWdhhpcRfJfX/Q==:6k8ZaHXVKVTHuS17JdQXt5J2wPCjpQswWYZKDFPdZec=",
   "maxConnections": 10
 }

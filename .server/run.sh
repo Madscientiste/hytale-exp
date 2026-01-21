@@ -85,6 +85,8 @@ cd "$SERVER_DIR"
 # Build command array
 CMD=(
     java
+    --add-opens java.base/java.lang=ALL-UNNAMED
+    --enable-native-access=ALL-UNNAMED
     -jar "$LIBS_DIR/HytaleServer.jar"
 )
 

@@ -10,10 +10,15 @@ repositories {
 }
 
 java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(25)
-    }
+  toolchain {
+    languageVersion = JavaLanguageVersion.of(25)
+  }
 }
+
+// Note: Null-safety warnings are configured at IDE level via:
+// - .settings/org.eclipse.jdt.core.prefs (Eclipse JDT)
+// - .vscode/settings.json (VS Code Java extension)
+// These warnings are from static analysis, not the Java compiler
 
 dependencies {
     // Hytale Server API - compile only since it's provided at runtime
@@ -21,6 +26,7 @@ dependencies {
 
     // Testing
     testImplementation(libs.junit)
+    testRuntimeOnly(files("../../libs/HytaleServer.jar"))
 }
 
 tasks.jar {

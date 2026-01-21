@@ -56,7 +56,7 @@ clean:
 # Build rcon project and deploy
 rcon-build:
 	@echo "🔨 Building rcon project and deploying..."
-	./gradlew :rcon:build
+	./gradlew :rcon:clean :rcon:build
 	@mkdir -p .server/mods
 	@for jar in projects/rcon/build/libs/*.jar; do \
 		if [ -f "$$jar" ]; then \
