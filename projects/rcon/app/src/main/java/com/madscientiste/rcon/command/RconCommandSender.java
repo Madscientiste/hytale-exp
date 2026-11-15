@@ -32,17 +32,19 @@ public class RconCommandSender implements CommandSender {
     }
   }
 
-  @Override
+  /*
+   * Sender name, one method per server generation. Both are kept on purpose and both are left
+   * without @Override, so the source compiles against either server jar and one plugin jar runs
+   * on both:
+   * - getDisplayName(): abstract in CommandSender up to the January 2026 builds, gone in 0.7.7.
+   * - getUsername(): abstract in CommandSender since 0.7.7, absent in the January builds.
+   */
+
   @Nonnull
   public String getUsername() {
     return SENDER_NAME;
   }
 
-  /**
-   * Abstract in CommandSender before Hytale 0.7.7 (January 2026 builds), removed in 0.7.7. Kept
-   * without {@code @Override} so the same jar compiles against 0.7.7 and still runs on older
-   * servers.
-   */
   @Nonnull
   public String getDisplayName() {
     return SENDER_NAME;
