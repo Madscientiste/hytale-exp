@@ -125,6 +125,44 @@ public class AuthFailureTrackerTest {
         AuthFailureTracker.keyFor(InetAddress.getByName("192.0.2.8")));
   }
 
+  /** A local program can use any 127.x.y.z as its source address, so they must all count as one. */
+  @Test
+  public void allOfLoopbackIsOneAddress() throws Exception {
+    String key = AuthFailureTracker.keyFor(InetAddress.getByName("127.0.0.1"));
+
+    assertEquals(AuthFailureTracker.LOOPBACK_KEY, key);
+    assertEquals(key, AuthFailureTracker.keyFor(InetAddress.getByName("127.0.0.2")));
+    assertEquals(key, AuthFailureTracker.keyFor(InetAddress.getByName("127.200.30.4")));
+    assertEquals(key, AuthFailureTracker.keyFor(InetAddress.getByName("::1")));
+
+    byte[] mapped = new byte[16];
+    mapped[10] = (byte) 0xFF;
+    mapped[11] = (byte) 0xFF;
+    mapped[12] = 127;
+    mapped[15] = 9;
+    assertEquals(
+        "::ffff:127.0.0.9 is loopback too",
+        key,
+        AuthFailureTracker.keyFor(java.net.Inet6Address.getByAddress(null, mapped, null)));
+
+    assertNotEquals(key, AuthFailureTracker.keyFor(InetAddress.getByName("128.0.0.1")));
+    assertNotEquals(key, AuthFailureTracker.keyFor(InetAddress.getByName("::2")));
+  }
+
+  @Test
+  public void ipv4MappedAddressesCountAsTheirIpv4Address() throws Exception {
+    byte[] mapped = new byte[16];
+    mapped[10] = (byte) 0xFF;
+    mapped[11] = (byte) 0xFF;
+    mapped[12] = (byte) 192;
+    mapped[13] = 0;
+    mapped[14] = 2;
+    mapped[15] = 7;
+    assertEquals(
+        "192.0.2.7",
+        AuthFailureTracker.keyFor(java.net.Inet6Address.getByAddress(null, mapped, null)));
+  }
+
   @Test
   public void ipv6IsCountedPerSlash64() throws Exception {
     String first = AuthFailureTracker.keyFor(InetAddress.getByName("2001:db8:1:2::1"));

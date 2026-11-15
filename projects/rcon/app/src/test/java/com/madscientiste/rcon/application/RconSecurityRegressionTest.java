@@ -8,6 +8,7 @@ import static org.junit.Assert.fail;
 
 import com.madscientiste.rcon.RconServer;
 import com.madscientiste.rcon.infrastructure.AuthenticationService;
+import com.madscientiste.rcon.infrastructure.ConfigException;
 import com.madscientiste.rcon.infrastructure.ConfigLoader;
 import com.madscientiste.rcon.infrastructure.RconConfig;
 import com.madscientiste.rcon.protocol.RconPacket;
@@ -30,12 +31,13 @@ import org.junit.Before;
 import org.junit.Test;
 
 /**
- * One test per finding of the RCON pentest. Each drives the server the way the attack did, over a
- * real socket, with the default limits. The file uses only API that existed before the fixes, so it
- * can be run against the old code to show that each test fails there.
+ * Tests for the findings of the RCON pentest and of the review that followed. Each drives the
+ * server the way the attack did, over a real socket, with the default limits unless the test says
+ * otherwise.
  *
- * <p>Attacks come from their own loopback address (127.0.0.x), so a ban earned in one test cannot
- * touch another, and so "another address still gets in" can be checked.
+ * <p>Every test gets a fresh server, so a ban earned in one test cannot touch another. The server
+ * counts all loopback addresses (127.0.0.0/8) as one peer; a test that needs a second, different
+ * peer uses {@link TestAddresses#outside()} and is skipped on a machine without a network card.
  */
 public class RconSecurityRegressionTest {
 
@@ -72,16 +74,77 @@ public class RconSecurityRegressionTest {
 
   @Test
   public void finding1_wrongPasswordsBanTheAddress() throws Exception {
+    String outside = TestAddresses.outside();
+    startSecondServer(
+        RconConfig.builder()
+            .host("0.0.0.0")
+            .port(SECOND_PORT)
+            .passwordHash(AuthenticationService.hashPassword(PASSWORD)));
+
     for (int i = 0; i < 5; i++) {
-      RconPacket reply = login("127.0.0.2", PORT, 10 + i, "wrong-" + i);
+      RconPacket reply = login(outside, SECOND_PORT, 10 + i, "wrong-" + i);
       assertNotNull("Wrong password " + i + " should still get a reply", reply);
       assertEquals("-1", reply.getBody());
     }
 
     assertFalse(
         "After 5 wrong passwords the address is banned: even the right password is refused",
-        sessionWorks("127.0.0.2", PORT));
-    assertTrue("The ban is per address: another one still gets in", sessionWorks(SERVER_IP, PORT));
+        sessionWorks(outside, SECOND_PORT));
+    assertTrue(
+        "The ban is per address: another one still gets in", sessionWorks(SERVER_IP, SECOND_PORT));
+  }
+
+  /**
+   * Review finding: any local program can bind a fresh 127.x.y.z for every guess. All of loopback
+   * must count as one address, or there is no limit at all from the machine itself.
+   */
+  @Test
+  public void finding1_allLoopbackAddressesShareOneGuessBudget() throws Exception {
+    int evaluated = 0;
+    for (int i = 0; i < 60; i++) {
+      String source = "127.0." + (10 + i / 250) + "." + (1 + i % 250);
+      if (login(source, PORT, i, "guess-" + i) != null) {
+        evaluated++;
+      }
+    }
+
+    assertTrue(
+        "60 guesses from 60 different loopback addresses: at most 5 may be checked, got "
+            + evaluated,
+        evaluated <= 5);
+    assertFalse(
+        "127.0.0.1 is the same peer as the other loopback addresses: banned with them",
+        sessionWorks(SERVER_IP, PORT));
+  }
+
+  /**
+   * Review finding: a guess followed at once by a connection reset made the reply fail, and the
+   * failed login never reached the log (a throttled stack trace was written instead).
+   */
+  @Test
+  public void finding1_aGuessFollowedByAResetIsStillLogged() throws Exception {
+    logs.assumeAvailable();
+    logs.clear();
+
+    for (int i = 0; i < 3; i++) {
+      Socket socket = connectFrom("127.0.0.21", PORT);
+      socket.setSoLinger(true, 0); // close() sends a reset instead of a normal shutdown
+      socket.getOutputStream().write(new RconPacket(1, 3, "guess-" + i).toBytes());
+      Thread.sleep(20);
+      socket.close();
+      Thread.sleep(700);
+    }
+
+    assertEquals(
+        "Each of the 3 guesses must leave a failed-login line with its address",
+        3,
+        logs.count(
+            m ->
+                m.contains("result=failure")
+                    && m.contains("invalid_password")
+                    && m.contains("remote_ip=127.0.0.21")));
+    assertEquals("A peer that hangs up is not a fault", 0, logs.countWithStackTrace());
+    assertFalse(logs.anyMessage(m -> m.contains("byte_processing_failure")));
   }
 
   @Test
@@ -231,11 +294,18 @@ public class RconSecurityRegressionTest {
 
   @Test
   public void finding4_oneAddressCannotTakeEverySlot() throws Exception {
+    String outside = TestAddresses.outside();
+    startSecondServer(
+        RconConfig.builder()
+            .host("0.0.0.0")
+            .port(SECOND_PORT)
+            .passwordHash(AuthenticationService.hashPassword(PASSWORD)));
+
     List<Socket> held = new ArrayList<>();
     try {
       for (int i = 0; i < 10; i++) {
         try {
-          Socket socket = connectFrom("127.0.0.10", PORT);
+          Socket socket = connectFrom(outside, SECOND_PORT);
           socket.getOutputStream().write(new byte[] {(byte) 0xFC, 0x0F, 0, 0});
           held.add(socket);
         } catch (IOException e) {
@@ -244,13 +314,138 @@ public class RconSecurityRegressionTest {
       }
       Thread.sleep(300);
 
+      assertEquals(
+          "One address holds 4 connections at most", 4, secondServer.getStats().connectionCount);
       assertTrue(
           "With 10 sockets opened from one address, another address must still get in",
-          sessionWorks(SERVER_IP, PORT));
+          sessionWorks(SERVER_IP, SECOND_PORT));
     } finally {
       for (Socket socket : held) {
         socket.close();
       }
+    }
+  }
+
+  /**
+   * Review finding: three outside addresses (4 + 4 + 2 connections) filled every slot, and a health
+   * check from 127.0.0.1 with the right password was refused. The last slot is now kept for
+   * loopback. Shown here with a small server: 3 slots, all of them open to one outside address.
+   */
+  @Test
+  public void finding4_theLastSlotIsKeptForLoopback() throws Exception {
+    String outside = TestAddresses.outside();
+    startSecondServer(
+        RconConfig.builder()
+            .host("0.0.0.0")
+            .port(SECOND_PORT)
+            .maxConnections(3)
+            .maxConnectionsPerIp(3)
+            .passwordHash(AuthenticationService.hashPassword(PASSWORD)));
+
+    List<Socket> held = new ArrayList<>();
+    try {
+      for (int i = 0; i < 3; i++) {
+        try {
+          Socket socket = connectFrom(outside, SECOND_PORT);
+          socket.getOutputStream().write(new byte[] {(byte) 0xFC, 0x0F, 0, 0});
+          held.add(socket);
+        } catch (IOException e) {
+          // Refused
+        }
+      }
+      Thread.sleep(300);
+
+      assertEquals(
+          "Outside addresses can take all slots but the last",
+          2,
+          secondServer.getStats().connectionCount);
+      assertTrue(
+          "A local client must still get in while outside addresses hold every other slot",
+          sessionWorks(SERVER_IP, SECOND_PORT));
+    } finally {
+      for (Socket socket : held) {
+        socket.close();
+      }
+    }
+  }
+
+  /**
+   * Review finding: a command that threw an Error (a server API mismatch shows up as
+   * NoSuchMethodError) killed the connection's thread without closing the connection, so its slot
+   * was lost until restart.
+   */
+  @Test
+  public void anErrorInACommandStillFreesTheConnection() throws Exception {
+    java.lang.reflect.Field field = RconServer.class.getDeclaredField("commandDispatcher");
+    field.setAccessible(true);
+    ((com.madscientiste.rcon.command.CommandDispatcher) field.get(server))
+        .registerCommand(
+            "boom",
+            new com.madscientiste.rcon.command.Command() {
+              @Override
+              public String execute(String arguments) {
+                throw new NoSuchMethodError("simulated server API mismatch");
+              }
+
+              @Override
+              public boolean requiresAuth() {
+                return true;
+              }
+
+              @Override
+              public String getDescription() {
+                return "";
+              }
+            });
+
+    for (int i = 0; i < 4; i++) {
+      try (Socket socket = RconTestHelpers.connectAndAuth(SERVER_IP, PORT, PASSWORD)) {
+        RconTestHelpers.sendPacket(socket, new RconPacket(2, 2, "boom"));
+        readUntilClosed(socket);
+      }
+    }
+
+    long end = System.currentTimeMillis() + 3000;
+    while (System.currentTimeMillis() < end && server.getStats().connectionCount > 0) {
+      Thread.sleep(50);
+    }
+
+    assertEquals("Every connection is closed", 0, server.getStats().connectionCount);
+    assertEquals("No session state is left", 0, server.getStats().connectionStateCount);
+    assertTrue("The next client gets in", sessionWorks(SERVER_IP, PORT));
+  }
+
+  /**
+   * Review finding: with maxFrameSize at its maximum (1 MB) a peer that had not logged in could
+   * make the server buffer a megabyte per connection and burn CPU on it. Before login a packet is
+   * now limited to the default size, whatever the config says.
+   */
+  @Test
+  public void aLargeMaxFrameSizeDoesNotApplyBeforeLogin() throws Exception {
+    startSecondServer(
+        RconConfig.builder()
+            .port(SECOND_PORT)
+            .maxFrameSize(1048576)
+            .passwordHash(AuthenticationService.hashPassword(PASSWORD)));
+
+    try (Socket socket = connectFrom(SERVER_IP, SECOND_PORT)) {
+      // Size header announcing a 100000-byte packet, sent without logging in
+      socket.getOutputStream().write(new byte[] {(byte) 0xA0, (byte) 0x86, 0x01, 0});
+      Thread.sleep(500);
+      assertTrue(
+          "A packet larger than the default size is refused at once before login",
+          isClosedByPeer(socket));
+    }
+
+    // After login the configured size applies
+    String text = "x".repeat(50_000);
+    try (Socket socket = RconTestHelpers.connectAndAuth(SERVER_IP, SECOND_PORT, PASSWORD)) {
+      RconTestHelpers.sendPacket(socket, new RconPacket(9, 2, "echo " + text));
+      StringBuilder reply = new StringBuilder();
+      while (reply.length() < text.length()) {
+        reply.append(RconTestHelpers.readResponse(socket).getBody());
+      }
+      assertEquals(text, reply.toString());
     }
   }
 
@@ -359,6 +554,56 @@ public class RconSecurityRegressionTest {
         logs.count(m -> m.contains("old format")));
   }
 
+  /** Review finding: a current-format hash with very few iterations gave no warning. */
+  @Test
+  public void finding10_aHashWithFewIterationsWarnsAtStartup() throws Exception {
+    logs.assumeAvailable();
+    byte[] salt = "0123456789abcdef".getBytes(StandardCharsets.UTF_8);
+    javax.crypto.spec.PBEKeySpec spec =
+        new javax.crypto.spec.PBEKeySpec("few-iterations".toCharArray(), salt, 10_000, 256);
+    byte[] hash =
+        javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA512")
+            .generateSecret(spec)
+            .getEncoded();
+    String weak =
+        "pbkdf2-sha512:10000:"
+            + Base64.getEncoder().encodeToString(salt)
+            + ":"
+            + Base64.getEncoder().encodeToString(hash);
+
+    startSecondServer(RconConfig.builder().port(SECOND_PORT).passwordHash(weak));
+
+    assertTrue(
+        "A hash made with fewer iterations than new hashes get must say so at startup",
+        logs.await(m -> m.contains("fewer than") && m.contains("iterations"), 2000));
+    RconPacket reply = login(SERVER_IP, SECOND_PORT, 5, "few-iterations");
+    assertNotNull(reply);
+    assertEquals("It still works", "1", reply.getBody());
+  }
+
+  /**
+   * Review finding: a config without a password hash accepted any login. Without the owner's
+   * explicit opt-in the server now refuses to start.
+   */
+  @Test
+  public void aServerWithoutPasswordHashRefusesToStart() throws Exception {
+    secondServer = new RconServer(RconConfig.builder().port(SECOND_PORT).build());
+    try {
+      secondServer.start();
+      fail("A server with no password hash and no opt-in must not start");
+    } catch (IllegalStateException expected) {
+      assertTrue(expected.getMessage(), expected.getMessage().contains("passwordHash"));
+    }
+
+    assertFalse(secondServer.isRunning());
+    try (Socket socket = new Socket()) {
+      socket.connect(new InetSocketAddress(SERVER_IP, SECOND_PORT), 1000);
+      fail("Nothing may be listening");
+    } catch (IOException expected) {
+      // Connection refused
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Finding 11: log injection
   // ---------------------------------------------------------------------------
@@ -427,10 +672,9 @@ public class RconSecurityRegressionTest {
       try {
         RconConfig loaded = new ConfigLoader(file).load();
         fail("A broken config must not load, but gave " + loaded + " for: " + content);
-      } catch (AssertionError e) {
-        throw e;
-      } catch (Throwable expected) {
-        // Refused, as it should be
+      } catch (ConfigException expected) {
+        // Refused the intended way: any other exception fails the test
+        assertTrue(expected.getMessage(), expected.getMessage().contains(file.toString()));
       }
       assertEquals("The broken file must not be changed", content, Files.readString(file));
     }
@@ -500,14 +744,16 @@ public class RconSecurityRegressionTest {
   // Helpers
   // ---------------------------------------------------------------------------
 
-  /** Connect to the server from a chosen loopback source address. */
+  /** Connect to a server on this machine from a chosen source address. */
   private static Socket connectFrom(String sourceIp, int port) throws IOException {
-    Socket socket = new Socket();
-    socket.bind(new InetSocketAddress(sourceIp, 0));
-    socket.connect(new InetSocketAddress(SERVER_IP, port), 3000);
-    socket.setSoTimeout(5000);
-    socket.setTcpNoDelay(true);
-    return socket;
+    return TestAddresses.connectFrom(sourceIp, port);
+  }
+
+  /** Start a second server; tearDown stops it. */
+  private void startSecondServer(RconConfig.Builder config) throws Exception {
+    secondServer = new RconServer(config.build());
+    secondServer.start();
+    Thread.sleep(100);
   }
 
   /** Send one login. Returns the reply, or null if the server closed without answering. */

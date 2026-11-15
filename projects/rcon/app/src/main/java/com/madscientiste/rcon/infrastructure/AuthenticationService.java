@@ -26,12 +26,25 @@ public class AuthenticationService {
 
   /** Human-readable description of the accepted formats, for error messages. */
   public static final String HASH_FORMAT_DESCRIPTION =
-      "pbkdf2-sha512:iterations:base64salt:base64hash, or the legacy base64salt:base64hash";
+      "pbkdf2-sha512:iterations:base64salt:base64hash with 10000 to 1000000 iterations,"
+          + " or the legacy base64salt:base64hash";
 
   private static final String PBKDF2_PREFIX = "pbkdf2-sha512";
   private static final String PBKDF2_ALGORITHM = "PBKDF2WithHmacSHA512";
-  private static final int PBKDF2_ITERATIONS = 210_000;
-  private static final int PBKDF2_MAX_ITERATIONS = 10_000_000;
+
+  /** Iterations used for new hashes, and the count below which a stored hash gets a warning. */
+  public static final int PBKDF2_ITERATIONS = 210_000;
+
+  /** Fewer iterations than this is not a slow hash at all: such a hash is refused. */
+  public static final int PBKDF2_MIN_ITERATIONS = 10_000;
+
+  /**
+   * More than this is refused: one check must stay well under the login deadline (a million
+   * iterations take about 0.7 s), or every login would time out and each guess would cost seconds
+   * of CPU.
+   */
+  public static final int PBKDF2_MAX_ITERATIONS = 1_000_000;
+
   private static final int PBKDF2_HASH_BYTES = 32;
 
   private static final String LEGACY_ALGORITHM = "SHA-256";
@@ -112,6 +125,18 @@ public class AuthenticationService {
   }
 
   /**
+   * True if the string is a current-format hash made with fewer iterations than new hashes get. It
+   * works, but is weaker than it should be.
+   */
+  public static boolean hasWeakIterations(@Nullable String storedHash) {
+    if (storedHash == null) {
+      return false;
+    }
+    ParsedHash parsed = parse(storedHash);
+    return parsed != null && !parsed.legacy() && parsed.iterations() < PBKDF2_ITERATIONS;
+  }
+
+  /**
    * Generate a cryptographically secure random password.
    *
    * @return A secure random password string of length PASSWORD_LENGTH
@@ -146,10 +171,14 @@ public class AuthenticationService {
       }
 
       if (parts.length == 4 && PBKDF2_PREFIX.equals(parts[0])) {
+        // Plain digits only: Integer.parseInt alone would also take a sign
+        if (!parts[1].matches("[0-9]{1,9}")) {
+          return null;
+        }
         int iterations = Integer.parseInt(parts[1]);
         byte[] salt = b64.decode(parts[2]);
         byte[] hash = b64.decode(parts[3]);
-        if (iterations < 1
+        if (iterations < PBKDF2_MIN_ITERATIONS
             || iterations > PBKDF2_MAX_ITERATIONS
             || salt.length == 0
             || hash.length < 16

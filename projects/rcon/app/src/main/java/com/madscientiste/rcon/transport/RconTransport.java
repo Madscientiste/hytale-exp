@@ -1,5 +1,6 @@
 package com.madscientiste.rcon.transport;
 
+import com.madscientiste.rcon.infrastructure.AddressRange;
 import com.madscientiste.rcon.infrastructure.AuthFailureTracker;
 import com.madscientiste.rcon.infrastructure.RconConfig;
 import com.madscientiste.rcon.infrastructure.RconConstants;
@@ -97,10 +98,15 @@ public class RconTransport {
     }
   }
 
-  public void send(String connectionId, byte[] data) throws Exception {
+  /**
+   * Send bytes to a connection.
+   *
+   * @throws IOException if the connection is closed or the peer is gone
+   */
+  public void send(String connectionId, byte[] data) throws IOException {
     RconConnection connection = connections.get(connectionId);
     if (connection == null) {
-      throw new Exception("Connection not found: " + connectionId);
+      throw new IOException("Connection is closed");
     }
     connection.send(data);
   }
@@ -178,7 +184,22 @@ public class RconTransport {
     String remoteIp = remoteAddress.getHostAddress();
     String addressKey = AuthFailureTracker.keyFor(remoteAddress);
 
-    String refusal = refusalReason(addressKey);
+    int fromThisAddress = 0;
+    for (RconConnection connection : connections.values()) {
+      if (connection.getAddressKey().equals(addressKey)) {
+        fromThisAddress++;
+      }
+    }
+
+    // Only the accept thread adds connections, so the counts cannot be overshot
+    String refusal =
+        refusalReason(
+            authFailures.isBanned(addressKey),
+            AddressRange.isLoopback(remoteAddress),
+            connections.size(),
+            fromThisAddress,
+            config.getMaxConnections(),
+            config.getMaxConnectionsPerIp());
     if (refusal != null) {
       closeQuietly(clientSocket);
       logger
@@ -228,24 +249,34 @@ public class RconTransport {
   }
 
   /**
-   * Why a new connection from this address must be refused, or null to accept it. Only the accept
-   * thread adds connections, so the counts cannot be overshot.
+   * Why a new connection must be refused, or null to accept it.
+   *
+   * <p>The last free slot is kept for this machine (loopback): however many outside addresses fill
+   * the server, a local client such as a health check can still get in. With a single slot in total
+   * there is nothing to keep back.
+   *
+   * @param banned The address is banned for wrong passwords
+   * @param loopback The peer is on this machine
+   * @param open Connections open right now
+   * @param openFromThisAddress Of those, how many count under the same address key
    */
-  private String refusalReason(String addressKey) {
-    if (authFailures.isBanned(addressKey)) {
+  static String refusalReason(
+      boolean banned,
+      boolean loopback,
+      int open,
+      int openFromThisAddress,
+      int maxConnections,
+      int maxConnectionsPerIp) {
+    if (banned) {
       return "address_banned";
     }
-    if (!canAcceptConnection()) {
+    if (open >= maxConnections) {
       return "max_connections";
     }
-
-    int fromThisAddress = 0;
-    for (RconConnection connection : connections.values()) {
-      if (connection.getAddressKey().equals(addressKey)) {
-        fromThisAddress++;
-      }
+    if (!loopback && maxConnections > 1 && open >= maxConnections - 1) {
+      return "last_slot_reserved_for_loopback";
     }
-    if (fromThisAddress >= config.getMaxConnectionsPerIp()) {
+    if (openFromThisAddress >= maxConnectionsPerIp) {
       return "max_connections_per_ip";
     }
     return null;

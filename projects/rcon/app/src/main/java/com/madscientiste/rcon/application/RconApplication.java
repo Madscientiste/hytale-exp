@@ -13,9 +13,11 @@ import com.madscientiste.rcon.protocol.RconPacket;
 import com.madscientiste.rcon.protocol.RconProtocol;
 import com.madscientiste.rcon.transport.RconTransport;
 import com.madscientiste.rcon.transport.TransportCallbacks;
+import java.io.IOException;
 import java.net.InetAddress;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.logging.Level;
 
 public class RconApplication implements TransportCallbacks {
 
@@ -23,10 +25,12 @@ public class RconApplication implements TransportCallbacks {
   private static final class Session {
     final ConnectionState state = new ConnectionState();
     final AtomicInteger commandCount = new AtomicInteger(0);
+    final InetAddress remoteAddress;
     final String remoteIp;
     final String addressKey;
 
     Session(InetAddress remoteAddress) {
+      this.remoteAddress = remoteAddress;
       this.remoteIp = remoteAddress.getHostAddress();
       this.addressKey = AuthFailureTracker.keyFor(remoteAddress);
     }
@@ -94,17 +98,36 @@ public class RconApplication implements TransportCallbacks {
         handleProtocolError(connectionId, session, error.getErrorMessage());
       }
 
-    } catch (Exception e) {
+    } catch (Throwable t) {
+      // A fault on our side, never the peer's doing: a reply that cannot be sent and bad input
+      // are handled where they happen, without a stack trace. Errors are caught too (a server
+      // API mismatch surfaces as NoSuchMethodError), so the connection is always closed.
       logger
           .event(LogEvent.APPLICATION_ERROR)
           .withParam("error_code", "byte_processing_failure")
-          .withParam("message", "Error processing bytes")
+          .withParam("message", "Error processing bytes: " + t)
           .withOptionalParam("connection_id", connectionId)
           .withOptionalParam("remote_ip", session.remoteIp)
-          .withCause(e)
+          .withCause(t)
           .throttledBy(preAuthThrottle(session), session.addressKey)
           .log();
       closeConnection(connectionId, "Processing error");
+    }
+  }
+
+  /**
+   * Send one packet. A peer that is gone is an ordinary end of the connection: it is closed with
+   * that as the reason, and nothing is logged as an error.
+   *
+   * @return false if the packet could not be sent and the connection is now closed
+   */
+  private boolean send(String connectionId, RconPacket packet) {
+    try {
+      transport.send(connectionId, protocol.formatPacket(packet));
+      return true;
+    } catch (IOException e) {
+      closeConnection(connectionId, "Send failed: " + e.getMessage());
+      return false;
     }
   }
 
@@ -177,58 +200,43 @@ public class RconApplication implements TransportCallbacks {
     }
   }
 
-  private void handleAuthPacket(String connectionId, RconPacket packet, Session session)
-      throws Exception {
+  private void handleAuthPacket(String connectionId, RconPacket packet, Session session) {
     int responseId = packet.getId();
     String providedPassword = packet.getBody();
+    boolean noPasswordMode = !config.requiresPassword();
     boolean authSuccess = false;
-    String failureReason = "invalid_password";
+    boolean counted = false;
+    boolean banned = false;
+    String failureReason;
 
-    if (!config.requiresPassword()) {
+    // Every refused login is counted against the address, and the count is reserved before the
+    // check so that parallel connections cannot get extra tries.
+    if (noPasswordMode && config.mayLogInWithoutPassword(session.remoteAddress)) {
+      // The owner opted in to no-password logins from this address (RconServer checks the opt-in)
       authSuccess = true;
-      logger
-          .event(LogEvent.PROTOCOL_AUTH)
-          .withParam("connection_id", connectionId)
-          .withParam("remote_ip", session.remoteIp)
-          .withParam("result", "success")
-          .withOptionalParam("failure_reason", "no_password_configured")
-          .atLevel(java.util.logging.Level.WARNING)
-          .log();
+      failureReason = null;
     } else if (!authFailures.tryBeginAttempt(session.addressKey)) {
-      // Banned, or the address has used up its guesses: the password is not even looked at
+      // Banned, or the address has used up its tries: the password is not even looked at
       failureReason = "too_many_failures";
     } else {
-      boolean banned = false;
+      counted = true;
+      failureReason = noPasswordMode ? "address_not_allowed" : "invalid_password";
       try {
         authSuccess =
-            AuthenticationService.verifyPassword(providedPassword, config.getPasswordHash());
+            !noPasswordMode
+                && AuthenticationService.verifyPassword(providedPassword, config.getPasswordHash());
       } finally {
         banned = authFailures.endAttempt(session.addressKey, authSuccess);
       }
-
-      if (banned) {
-        logger
-            .event(LogEvent.TRANSPORT_RATE_LIMIT)
-            .withParam("remote_ip", session.remoteIp)
-            .withParam("action", "address_banned")
-            .withParam("reason", "too_many_wrong_passwords")
-            .withParam("count", config.getAuthMaxFailures())
-            .withParam("time_window_ms", config.getAuthBanMs())
-            .log();
-      }
     }
 
+    // Everything is logged before the reply is sent. A peer that resets the connection right
+    // after its guess makes the send fail, and must not get its attempt out of the log that way.
     if (authSuccess) {
       // Logged in before the reply goes out: the login deadline stops counting here
       session.state.markAuthenticated();
       transport.markAuthenticated(connectionId);
-    }
 
-    RconPacket response = protocol.createAuthResponse(responseId, authSuccess);
-    byte[] responseData = protocol.formatPacket(response);
-    transport.send(connectionId, responseData);
-
-    if (authSuccess) {
       logger
           .event(LogEvent.APPLICATION_SESSION_START)
           .withParam("connection_id", connectionId)
@@ -241,20 +249,36 @@ public class RconApplication implements TransportCallbacks {
           .withParam("connection_id", connectionId)
           .withParam("remote_ip", session.remoteIp)
           .withParam("result", "success")
+          .withOptionalParam("failure_reason", noPasswordMode ? "no_password_configured" : null)
+          .atLevel(noPasswordMode ? Level.WARNING : Level.INFO)
           .log();
     } else {
-      // A counted wrong password is always logged (the ban caps how many there can be). Refused
-      // attempts from a banned address can come in any number, so they share the log budget.
-      boolean counted = "invalid_password".equals(failureReason);
+      // A counted failure is always logged (the ban caps how many there can be). Attempts
+      // refused without a check can come in any number, so they share the log budget.
       logger
           .event(LogEvent.PROTOCOL_AUTH)
           .withParam("connection_id", connectionId)
           .withParam("remote_ip", session.remoteIp)
           .withParam("result", "failure")
           .withOptionalParam("failure_reason", failureReason)
-          .atLevel(java.util.logging.Level.WARNING)
+          .atLevel(Level.WARNING)
           .throttledBy(counted ? null : preAuthLogs, session.addressKey)
           .log();
+
+      if (banned) {
+        logger
+            .event(LogEvent.TRANSPORT_RATE_LIMIT)
+            .withParam("remote_ip", session.remoteIp)
+            .withParam("action", "address_banned")
+            .withParam("reason", "too_many_failed_logins")
+            .withParam("count", config.getAuthMaxFailures())
+            .withParam("time_window_ms", config.getAuthBanMs())
+            .log();
+      }
+    }
+
+    boolean sent = send(connectionId, protocol.createAuthResponse(responseId, authSuccess));
+    if (sent && !authSuccess) {
       closeConnection(connectionId, "Authentication failed");
     }
   }
@@ -270,7 +294,8 @@ public class RconApplication implements TransportCallbacks {
 
     try {
       response = commandDispatcher.execute(commandLine);
-    } catch (Exception e) {
+    } catch (Throwable e) {
+      // Errors too: a command built against another server version fails with one
       errorCode = e.getClass().getSimpleName();
       commandLogger
           .event(LogEvent.COMMAND_ERROR)
@@ -298,7 +323,9 @@ public class RconApplication implements TransportCallbacks {
 
     // A long reply goes out as several packets with the same id
     for (RconPacket responsePacket : protocol.createCommandResponses(packet.getId(), response)) {
-      transport.send(connectionId, protocol.formatPacket(responsePacket));
+      if (!send(connectionId, responsePacket)) {
+        return;
+      }
     }
   }
 

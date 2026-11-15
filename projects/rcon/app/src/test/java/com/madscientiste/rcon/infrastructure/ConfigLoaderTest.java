@@ -6,9 +6,11 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import java.net.InetAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.List;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
@@ -69,6 +71,8 @@ public class ConfigLoaderTest {
             .authFailureWindowMs(4444)
             .authBanMs(5555)
             .passwordHash(hash)
+            .allowNoPassword(true)
+            .noPasswordAllowFrom(List.of("10.0.0.0/8", "::1", "192.0.2.7"))
             .build();
 
     assertTrue(loader.save(saved));
@@ -76,6 +80,89 @@ public class ConfigLoaderTest {
 
     assertEquals(saved.toString(), loaded.toString());
     assertEquals(hash, loaded.getPasswordHash());
+    assertTrue(loaded.isAllowNoPassword());
+    assertEquals("[10.0.0.0/8, ::1, 192.0.2.7]", loaded.getNoPasswordAllowFrom().toString());
+  }
+
+  @Test
+  public void noPasswordModeIsOffByDefaultAndLimitedToThisMachine() throws Exception {
+    RconConfig defaults = loader.load();
+    assertFalse(defaults.isAllowNoPassword());
+    assertFalse(defaults.isNoPasswordMode());
+    assertEquals("[127.0.0.0/8, ::1]", defaults.getNoPasswordAllowFrom().toString());
+
+    Files.writeString(file, "{ \"allowNoPassword\": true }");
+    RconConfig optedIn = loader.load();
+    assertTrue(optedIn.isNoPasswordMode());
+    assertTrue(optedIn.mayLogInWithoutPassword(InetAddress.getByName("127.9.9.9")));
+    assertTrue(optedIn.mayLogInWithoutPassword(InetAddress.getByName("::1")));
+    assertFalse(optedIn.mayLogInWithoutPassword(InetAddress.getByName("192.0.2.7")));
+
+    Files.writeString(
+        file,
+        "{ \"allowNoPassword\": true, \"noPasswordAllowFrom\": [\"192.0.2.0/24\", \"2001:db8::/32\"] }");
+    RconConfig widened = loader.load();
+    assertTrue(widened.mayLogInWithoutPassword(InetAddress.getByName("192.0.2.7")));
+    assertTrue(widened.mayLogInWithoutPassword(InetAddress.getByName("2001:db8::5")));
+    assertFalse(
+        "The list replaces the default: loopback is no longer on it",
+        widened.mayLogInWithoutPassword(InetAddress.getByName("127.0.0.1")));
+  }
+
+  @Test
+  public void badNoPasswordSettingsAreRefused() throws Exception {
+    assertRefused("{ \"allowNoPassword\": \"true\" }", "\"allowNoPassword\" must be true or false");
+    assertRefused("{ \"allowNoPassword\": 1 }", "\"allowNoPassword\" must be true or false");
+    assertRefused("{ \"noPasswordAllowFrom\": \"127.0.0.1\" }", "must be a list of strings");
+    assertRefused("{ \"noPasswordAllowFrom\": [] }", "noPasswordAllowFrom must list");
+    assertRefused("{ \"noPasswordAllowFrom\": [127] }", "may only hold strings");
+    assertRefused("{ \"noPasswordAllowFrom\": [\"::1\",] }", "invalid JSON");
+    assertRefused("{ \"noPasswordAllowFrom\": [\"::1\" }", "invalid JSON");
+    assertRefused("{ \"noPasswordAllowFrom\": [[\"::1\"]] }", "may only hold strings");
+    assertRefused("{ \"noPasswordAllowFrom\": [\"localhost\"] }", "not an IP address or CIDR");
+    assertRefused("{ \"noPasswordAllowFrom\": [\"10.0.0.0/40\"] }", "after '/'");
+  }
+
+  /** Review finding: both of these were accepted. */
+  @Test
+  public void sloppyNumbersAndEscapesAreRefused() throws Exception {
+    assertRefused("{ \"port\": 025575 }", "must not start with 0");
+    assertRefused("{ \"port\": -025575 }", "must not start with 0");
+    assertRefused("{ \"host\": \"\\u+041\" }", "bad \\u escape");
+    assertRefused("{ \"host\": \"\\u-041\" }", "bad \\u escape");
+    assertRefused("{ \"host\": \"\\u00g1\" }", "bad \\u escape");
+    assertRefused("{ \"host\": \"\\u00\" }", "\\u escape");
+
+    Files.writeString(file, "{ \"host\": \"\\u0031\\u0030.0.0.1\", \"port\": 0 }");
+    try {
+      loader.load();
+      fail();
+    } catch (ConfigException e) {
+      assertTrue("A lone 0 is a number (and out of range here)", e.getMessage().contains("port"));
+    }
+  }
+
+  /**
+   * Review finding: a config in a folder that cannot be read counted as "no config yet", so a new
+   * password was made. It must count as a config that cannot be used.
+   */
+  @Test
+  public void aConfigInAnUnreadableFolderIsNotTakenForAMissingOne() throws Exception {
+    Assume.assumeTrue(file.getFileSystem().supportedFileAttributeViews().contains("posix"));
+    Files.writeString(file, "{ \"port\": 25575 }");
+    Path folder = file.getParent();
+    Files.setPosixFilePermissions(folder, PosixFilePermissions.fromString("---------"));
+    try {
+      Assume.assumeFalse("Running as a user that ignores permissions", Files.isReadable(file));
+      try {
+        RconConfig loaded = loader.load();
+        fail("Must not fall back to defaults, but gave " + loaded);
+      } catch (ConfigException e) {
+        assertTrue(e.getMessage(), e.getMessage().contains("cannot read"));
+      }
+    } finally {
+      Files.setPosixFilePermissions(folder, PosixFilePermissions.fromString("rwx------"));
+    }
   }
 
   @Test

@@ -49,6 +49,34 @@ public class AuthenticationServiceTest {
     assertFalse(AuthenticationService.verifyPassword("password-密码", unicode));
   }
 
+  /**
+   * Too few iterations is not a slow hash; too many makes one login take longer than the login
+   * deadline (10 million took 6.9 s). Both are refused. In between, anything below what new hashes
+   * get is accepted but flagged as weak.
+   */
+  @Test
+  public void iterationCountMustBeInASaneRange() {
+    String tail = ":c2FsdA==:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
+    assertFalse(AuthenticationService.isValidHash("pbkdf2-sha512:1" + tail));
+    assertFalse(AuthenticationService.isValidHash("pbkdf2-sha512:9999" + tail));
+    assertTrue(AuthenticationService.isValidHash("pbkdf2-sha512:10000" + tail));
+    assertTrue(AuthenticationService.isValidHash("pbkdf2-sha512:1000000" + tail));
+    assertFalse(AuthenticationService.isValidHash("pbkdf2-sha512:1000001" + tail));
+    assertFalse(AuthenticationService.isValidHash("pbkdf2-sha512:10000000" + tail));
+
+    assertTrue(AuthenticationService.hasWeakIterations("pbkdf2-sha512:10000" + tail));
+    assertTrue(AuthenticationService.hasWeakIterations("pbkdf2-sha512:209999" + tail));
+    assertFalse(AuthenticationService.hasWeakIterations("pbkdf2-sha512:210000" + tail));
+    assertFalse(
+        "A new hash is never weak",
+        AuthenticationService.hasWeakIterations(AuthenticationService.hashPassword("x")));
+    assertFalse(
+        "The old format has its own warning", AuthenticationService.hasWeakIterations(LEGACY));
+    assertFalse(AuthenticationService.hasWeakIterations(null));
+    assertFalse(AuthenticationService.hasWeakIterations("pbkdf2-sha512:1" + tail));
+  }
+
   @Test
   public void malformedHashesAreInvalidAndNeverVerify() {
     String[] malformed = {
@@ -60,9 +88,12 @@ public class AuthenticationServiceTest {
       "pbkdf2-sha512:0:c2FsdA==:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", // zero iterations
       "pbkdf2-sha512:abc:c2FsdA==:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
       "pbkdf2-sha512:999999999:c2FsdA==:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-      "pbkdf2-sha512:1000::AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", // empty salt
-      "pbkdf2-sha512:1000:c2FsdA==:", // empty hash
-      "md5:1000:c2FsdA==:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", // unknown scheme
+      "pbkdf2-sha512:210000::AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", // empty salt
+      "pbkdf2-sha512:210000:c2FsdA==:", // empty hash
+      "md5:210000:c2FsdA==:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", // unknown scheme
+      "PBKDF2-SHA512:210000:c2FsdA==:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "pbkdf2-sha512:+210000:c2FsdA==:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", // sign
+      "pbkdf2-sha512: 210000:c2FsdA==:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
       "a:b:c",
     };
 

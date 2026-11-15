@@ -40,12 +40,38 @@ public class RconServer {
       throw new IllegalStateException("Server already started");
     }
 
+    // Fail closed: with no password hash, nobody gets a console unless the owner said so
+    if (!config.requiresPassword() && !config.isAllowNoPassword()) {
+      logger.atSevere().log(
+          "RCON refuses to start: no passwordHash is set. Set one, or set \"allowNoPassword\""
+              + " to true to accept logins without a password from the addresses in"
+              + " \"noPasswordAllowFrom\".");
+      throw new IllegalStateException(
+          "RCON has no passwordHash and allowNoPassword is not set: refusing to start");
+    }
+
     try {
+      if (config.isNoPasswordMode()) {
+        logger.atWarning().log(
+            "RCON RUNS WITHOUT A PASSWORD (allowNoPassword is true and no passwordHash is set)."
+                + " Anyone connecting from %s gets the full server console. Set a passwordHash"
+                + " to turn this off.",
+            config.getNoPasswordAllowFrom());
+      } else if (config.isAllowNoPassword()) {
+        logger.atInfo().log(
+            "allowNoPassword is true but a passwordHash is set: the password is required.");
+      }
+
       if (AuthenticationService.isLegacyHash(config.getPasswordHash())) {
         logger.atWarning().log(
             "The RCON passwordHash uses the old format (one round of SHA-256). It still works,"
                 + " but is fast to crack if the config file leaks. Generate a new hash to"
                 + " upgrade it.");
+      } else if (AuthenticationService.hasWeakIterations(config.getPasswordHash())) {
+        logger.atWarning().log(
+            "The RCON passwordHash was made with fewer than %d PBKDF2 iterations. It works, but"
+                + " is weaker than it should be. Generate a new hash to upgrade it.",
+            AuthenticationService.PBKDF2_ITERATIONS);
       }
 
       AuthFailureTracker authFailures =
@@ -112,7 +138,8 @@ public class RconServer {
   }
 
   public static void main(String[] args) {
-    RconConfig config = RconConfig.builder().build();
+    // Standalone run for development: no password, this machine only
+    RconConfig config = RconConfig.builder().allowNoPassword(true).build();
     RconServer server = new RconServer(config);
 
     RconLogger logger = RconLogger.createPluginLogger(RconConstants.LOGGER_APPLICATION);

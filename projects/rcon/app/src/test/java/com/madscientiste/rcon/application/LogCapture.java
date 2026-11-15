@@ -28,6 +28,11 @@ public final class LogCapture implements AutoCloseable {
     Assume.assumeTrue("This server jar does not expose its log records", available);
   }
 
+  /** False when the server jar cannot be listened to; log assertions must then be left out. */
+  public boolean isAvailable() {
+    return available;
+  }
+
   public List<LogRecord> records() {
     return List.copyOf(records);
   }

@@ -1,5 +1,8 @@
 package com.madscientiste.rcon.infrastructure;
 
+import java.net.InetAddress;
+import java.util.ArrayList;
+import java.util.List;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
@@ -20,6 +23,8 @@ public class RconConfig {
   private final int authFailureWindowMs;
   private final int authBanMs;
   @Nullable private final String passwordHash;
+  private final boolean allowNoPassword;
+  private final List<AddressRange> noPasswordAllowFrom;
 
   // Private constructor - use Builder
   private RconConfig(Builder b) {
@@ -82,8 +87,30 @@ public class RconConfig {
     this.authTimeoutMs = b.authTimeoutMs;
     this.authMaxFailures = b.authMaxFailures;
     this.authFailureWindowMs = b.authFailureWindowMs;
+    if (b.noPasswordAllowFrom == null
+        || b.noPasswordAllowFrom.isEmpty()
+        || b.noPasswordAllowFrom.size() > RconConstants.MAX_ADDRESS_RANGES) {
+      throw new IllegalArgumentException(
+          "noPasswordAllowFrom must list 1 to "
+              + RconConstants.MAX_ADDRESS_RANGES
+              + " addresses or CIDR ranges");
+    }
+    List<AddressRange> ranges = new ArrayList<>();
+    for (String range : b.noPasswordAllowFrom) {
+      if (range == null) {
+        throw new IllegalArgumentException("noPasswordAllowFrom must not contain null");
+      }
+      try {
+        ranges.add(AddressRange.parse(range));
+      } catch (IllegalArgumentException e) {
+        throw new IllegalArgumentException("noPasswordAllowFrom: " + e.getMessage());
+      }
+    }
+
     this.authBanMs = b.authBanMs;
     this.passwordHash = b.passwordHash;
+    this.allowNoPassword = b.allowNoPassword;
+    this.noPasswordAllowFrom = List.copyOf(ranges);
   }
 
   private static void requireRange(String name, int value, int min, int max) {
@@ -151,6 +178,35 @@ public class RconConfig {
     return passwordHash != null && !passwordHash.isEmpty();
   }
 
+  /** The owner's explicit choice to run without a password. Only matters when no hash is set. */
+  public boolean isAllowNoPassword() {
+    return allowNoPassword;
+  }
+
+  /**
+   * True when logins are accepted without a password check: no hash is set and the owner opted in.
+   * Even then only peers in {@link #getNoPasswordAllowFrom()} get in.
+   */
+  public boolean isNoPasswordMode() {
+    return !requiresPassword() && allowNoPassword;
+  }
+
+  /** Addresses that may log in without a password while the no-password mode is on. */
+  @Nonnull
+  public List<AddressRange> getNoPasswordAllowFrom() {
+    return noPasswordAllowFrom;
+  }
+
+  /** True if the peer may log in without a password while the no-password mode is on. */
+  public boolean mayLogInWithoutPassword(@Nonnull InetAddress address) {
+    for (AddressRange range : noPasswordAllowFrom) {
+      if (range.contains(address)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /**
    * Create a new RconConfig with updated password hash (copy-with pattern).
    *
@@ -186,7 +242,9 @@ public class RconConfig {
         .authMaxFailures(authMaxFailures)
         .authFailureWindowMs(authFailureWindowMs)
         .authBanMs(authBanMs)
-        .passwordHash(passwordHash);
+        .passwordHash(passwordHash)
+        .allowNoPassword(allowNoPassword)
+        .noPasswordAllowFrom(noPasswordAllowFrom.stream().map(AddressRange::toString).toList());
   }
 
   /** Builder for creating RconConfig instances. */
@@ -203,6 +261,8 @@ public class RconConfig {
     private int authFailureWindowMs = RconConstants.DEFAULT_AUTH_FAILURE_WINDOW_MS;
     private int authBanMs = RconConstants.DEFAULT_AUTH_BAN_MS;
     @Nullable private String passwordHash = null;
+    private boolean allowNoPassword = false;
+    private List<String> noPasswordAllowFrom = RconConstants.DEFAULT_NO_PASSWORD_ALLOW_FROM;
 
     private Builder() {}
 
@@ -278,6 +338,20 @@ public class RconConfig {
       return this;
     }
 
+    /** Opt in to running without a password (only has an effect when no hash is set). */
+    @Nonnull
+    public Builder allowNoPassword(boolean allowNoPassword) {
+      this.allowNoPassword = allowNoPassword;
+      return this;
+    }
+
+    /** Addresses or CIDR ranges that may log in without a password in no-password mode. */
+    @Nonnull
+    public Builder noPasswordAllowFrom(@Nonnull List<String> noPasswordAllowFrom) {
+      this.noPasswordAllowFrom = noPasswordAllowFrom;
+      return this;
+    }
+
     /**
      * Build an immutable RconConfig instance. Validates all fields.
      *
@@ -316,6 +390,10 @@ public class RconConfig {
         + authFailureWindowMs
         + ", authBanMs="
         + authBanMs
+        + ", allowNoPassword="
+        + allowNoPassword
+        + ", noPasswordAllowFrom="
+        + noPasswordAllowFrom
         + ", hasPassword="
         + requiresPassword()
         + '}';

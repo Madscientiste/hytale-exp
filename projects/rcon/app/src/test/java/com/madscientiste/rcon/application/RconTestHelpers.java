@@ -43,6 +43,7 @@ public class RconTestHelpers {
             .readTimeoutMs(RconConstants.DEFAULT_CONNECTION_TIMEOUT_MS)
             .connectionTimeoutMs(RconConstants.DEFAULT_CONNECTION_TIMEOUT_MS)
             .passwordHash(null)
+            .allowNoPassword(true) // loopback only, the default allow list
             .build();
     RconServer server = new RconServer(config);
     server.start();

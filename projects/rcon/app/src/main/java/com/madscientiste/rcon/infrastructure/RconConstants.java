@@ -44,6 +44,13 @@ public final class RconConstants {
   /** Default ban length after too many wrong passwords, in milliseconds (5 minutes). */
   public static final int DEFAULT_AUTH_BAN_MS = 300000;
 
+  /**
+   * Who may log in without a password when the owner turns the no-password mode on: this machine
+   * only (all of IPv4 loopback, and IPv6 loopback).
+   */
+  public static final java.util.List<String> DEFAULT_NO_PASSWORD_ALLOW_FROM =
+      java.util.List.of("127.0.0.0/8", "::1");
+
   // ============================================================================
   // Validation Limits
   // ============================================================================
@@ -69,8 +76,14 @@ public final class RconConstants {
    */
   public static final int MIN_FRAME_SIZE = 64;
 
-  /** Maximum frame size in bytes (1MB). */
+  /**
+   * Maximum frame size in bytes (1MB). Only a logged-in peer may send packets this large: before
+   * login a packet is limited to {@link #DEFAULT_MAX_FRAME_SIZE}, whatever the config says.
+   */
   public static final int MAX_FRAME_SIZE = 1048576;
+
+  /** Maximum number of entries in an address list of the config. */
+  public static final int MAX_ADDRESS_RANGES = 64;
 
   /** Minimum timeout value in milliseconds. */
   public static final int MIN_TIMEOUT_MS = 1;

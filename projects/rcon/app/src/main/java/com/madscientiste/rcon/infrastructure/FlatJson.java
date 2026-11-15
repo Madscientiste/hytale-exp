@@ -1,13 +1,15 @@
 package com.madscientiste.rcon.infrastructure;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import javax.annotation.Nonnull;
 
 /**
  * Strict reader and writer for a flat JSON object: one level of string keys mapped to strings,
- * whole numbers, booleans or null. That is all the config file needs, and being strict means a
- * damaged file is reported instead of half-read.
+ * whole numbers, booleans, null, or a list of strings. That is all the config file needs, and being
+ * strict means a damaged file is reported instead of half-read.
  */
 final class FlatJson {
 
@@ -19,7 +21,7 @@ final class FlatJson {
   }
 
   /**
-   * Parse a flat JSON object. Values are String, Long, Boolean or null.
+   * Parse a flat JSON object. Values are String, Long, Boolean, List of String, or null.
    *
    * @throws IllegalArgumentException with the reason and position when the text is not a flat JSON
    *     object
@@ -29,7 +31,7 @@ final class FlatJson {
     return new FlatJson(text).parseObject();
   }
 
-  /** Format a map of String, Number and Boolean values as a JSON object. */
+  /** Format a map of String, Number, Boolean and List-of-String values as a JSON object. */
   @Nonnull
   static String format(@Nonnull Map<String, Object> map) {
     StringBuilder json = new StringBuilder("{\n");
@@ -45,6 +47,12 @@ final class FlatJson {
       Object value = entry.getValue();
       if (value instanceof String s) {
         json.append(quote(s));
+      } else if (value instanceof List<?> list) {
+        json.append('[');
+        for (int i = 0; i < list.size(); i++) {
+          json.append(i > 0 ? ", " : "").append(quote(String.valueOf(list.get(i))));
+        }
+        json.append(']');
       } else {
         json.append(value);
       }
@@ -114,10 +122,42 @@ final class FlatJson {
       pos += 4;
       return null;
     }
-    if (c == '{' || c == '[') {
-      throw error("nested objects and lists are not supported");
+    if (c == '[') {
+      return parseStringList();
+    }
+    if (c == '{') {
+      throw error("nested objects are not supported");
     }
     throw error("expected a value");
+  }
+
+  private List<String> parseStringList() {
+    List<String> result = new ArrayList<>();
+    expect('[');
+    skipWhitespace();
+
+    if (peek() == ']') {
+      pos++;
+      return result;
+    }
+
+    while (true) {
+      skipWhitespace();
+      if (peek() != '"') {
+        throw error("a list may only hold strings in double quotes");
+      }
+      result.add(parseString());
+      skipWhitespace();
+
+      char c = next();
+      if (c == ']') {
+        return result;
+      }
+      if (c != ',') {
+        pos--;
+        throw error("expected ',' or ']'");
+      }
+    }
   }
 
   private Long parseWholeNumber() {
@@ -125,8 +165,14 @@ final class FlatJson {
     if (peek() == '-') {
       pos++;
     }
+    int firstDigit = pos;
     while (pos < text.length() && text.charAt(pos) >= '0' && text.charAt(pos) <= '9') {
       pos++;
+    }
+    // JSON has no leading zeros: 025575 is not a number (and some parsers read it as octal)
+    if (pos - firstDigit > 1 && text.charAt(firstDigit) == '0') {
+      pos = start;
+      throw error("a number must not start with 0");
     }
     if (pos < text.length()) {
       char c = text.charAt(pos);
@@ -172,11 +218,16 @@ final class FlatJson {
           if (pos + 4 > text.length()) {
             throw error("unfinished \\u escape");
           }
-          try {
-            sb.append((char) Integer.parseInt(text.substring(pos, pos + 4), 16));
-          } catch (NumberFormatException e) {
-            throw error("bad \\u escape");
+          // Exactly four hex digits; Integer.parseInt alone would also take a sign
+          int codeUnit = 0;
+          for (int i = 0; i < 4; i++) {
+            int digit = Character.digit(text.charAt(pos + i), 16);
+            if (digit < 0 || text.charAt(pos + i) > 'f') {
+              throw error("bad \\u escape");
+            }
+            codeUnit = codeUnit * 16 + digit;
           }
+          sb.append((char) codeUnit);
           pos += 4;
         }
         default -> {

@@ -25,6 +25,9 @@ public final class AuthFailureTracker {
 
   static final int MAX_TRACKED = 10_000;
 
+  /** The one key shared by every loopback address. */
+  public static final String LOOPBACK_KEY = "loopback";
+
   private static final class Entry {
     final ArrayDeque<Long> failures = new ArrayDeque<>();
     int inFlight;
@@ -52,11 +55,22 @@ public final class AuthFailureTracker {
   }
 
   /**
-   * The key failures are counted under. IPv4: the address. IPv6: the /64 network, because one
-   * machine normally owns a whole /64 and could otherwise switch address for every guess.
+   * The key failures and connections are counted under.
+   *
+   * <ul>
+   *   <li>Loopback (all of 127.0.0.0/8, and ::1): one key. Every program on the machine can pick
+   *       any 127.x.y.z as its source address, so counting them apart would be no limit at all.
+   *   <li>Other IPv4: the address.
+   *   <li>Other IPv6: the /64 network, because one machine normally owns a whole /64 and could
+   *       otherwise switch address for every guess.
+   * </ul>
    */
   @Nonnull
-  public static String keyFor(@Nonnull InetAddress address) {
+  public static String keyFor(@Nonnull InetAddress remoteAddress) {
+    InetAddress address = AddressRange.normalize(remoteAddress);
+    if (address.isLoopbackAddress()) {
+      return LOOPBACK_KEY;
+    }
     if (address instanceof Inet6Address) {
       byte[] raw = address.getAddress();
       StringBuilder sb = new StringBuilder(24);

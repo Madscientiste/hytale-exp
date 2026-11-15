@@ -3,11 +3,14 @@ package com.madscientiste.rcon.infrastructure;
 import java.io.IOException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nonnull;
@@ -37,7 +40,9 @@ public class ConfigLoader {
           "authMaxFailures",
           "authFailureWindowMs",
           "authBanMs",
-          "passwordHash");
+          "passwordHash",
+          "allowNoPassword",
+          "noPasswordAllowFrom");
 
   private final Path configPath;
 
@@ -78,19 +83,19 @@ public class ConfigLoader {
    */
   @Nonnull
   public RconConfig load() throws ConfigException {
-    if (!exists()) {
-      return RconConfig.builder().build();
-    }
-
+    // Read first and ask afterwards: "does it exist?" answers no for a file in a folder we may
+    // not look into, and a config we cannot read must never be taken for a missing one.
     String jsonContent;
     try {
       jsonContent = Files.readString(configPath);
+    } catch (NoSuchFileException e) {
+      return RconConfig.builder().build();
     } catch (IOException e) {
       throw new ConfigException("cannot read " + configPath + ": " + e, e);
     }
 
     // Tolerate a byte order mark left by some editors
-    if (jsonContent.startsWith("﻿")) {
+    if (!jsonContent.isEmpty() && jsonContent.charAt(0) == 0xFEFF) {
       jsonContent = jsonContent.substring(1);
     }
 
@@ -236,6 +241,12 @@ public class ConfigLoader {
     if (map.get("passwordHash") != null) {
       builder.passwordHash(requireString(map, "passwordHash"));
     }
+    if (map.containsKey("allowNoPassword")) {
+      builder.allowNoPassword(requireBoolean(map, "allowNoPassword"));
+    }
+    if (map.containsKey("noPasswordAllowFrom")) {
+      builder.noPasswordAllowFrom(requireStringList(map, "noPasswordAllowFrom"));
+    }
 
     return builder.build();
   }
@@ -263,7 +274,34 @@ public class ConfigLoader {
     if (config.getPasswordHash() != null) {
       map.put("passwordHash", config.getPasswordHash());
     }
+    map.put("allowNoPassword", config.isAllowNoPassword());
+    List<String> allowFrom = new ArrayList<>();
+    for (AddressRange range : config.getNoPasswordAllowFrom()) {
+      allowFrom.add(range.toString());
+    }
+    map.put("noPasswordAllowFrom", allowFrom);
     return map;
+  }
+
+  private static boolean requireBoolean(Map<String, Object> map, String key) {
+    Object value = map.get(key);
+    if (value instanceof Boolean b) {
+      return b;
+    }
+    throw new IllegalArgumentException("\"" + key + "\" must be true or false, without quotes");
+  }
+
+  private static List<String> requireStringList(Map<String, Object> map, String key) {
+    Object value = map.get(key);
+    if (value instanceof List<?> list) {
+      List<String> result = new ArrayList<>();
+      for (Object item : list) {
+        result.add((String) item); // FlatJson only builds lists of strings
+      }
+      return result;
+    }
+    throw new IllegalArgumentException(
+        "\"" + key + "\" must be a list of strings, for example [\"127.0.0.0/8\", \"::1\"]");
   }
 
   private static String requireString(Map<String, Object> map, String key) {

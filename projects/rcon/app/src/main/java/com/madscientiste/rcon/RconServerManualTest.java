@@ -8,7 +8,8 @@ import com.madscientiste.rcon.logging.RconLogger;
 public class RconServerManualTest {
 
   public static void main(String[] args) {
-    RconConfig config = RconConfig.builder().build();
+    // No password, this machine only
+    RconConfig config = RconConfig.builder().allowNoPassword(true).build();
     RconLogger logger = RconLogger.createPluginLogger(RconConstants.LOGGER_APPLICATION);
     RconServer server = new RconServer(config);
 
