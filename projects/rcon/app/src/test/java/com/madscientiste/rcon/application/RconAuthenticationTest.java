@@ -83,9 +83,6 @@ public class RconAuthenticationTest {
       RconTestHelpers.assertAuthFailure(socket, 100);
 
       // Try to send EXEC - should be rejected
-      RconPacket commandPacket =
-          new RconPacket(101, RconPacket.SERVERDATA_EXECCOMMAND, "echo test");
-      RconTestHelpers.sendPacket(socket, commandPacket);
       RconTestHelpers.assertCommandRejected(socket, "echo test");
     } finally {
       socket.close();

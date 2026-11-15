@@ -29,6 +29,12 @@ dependencies {
     testRuntimeOnly(files("../../libs/HytaleServer.jar"))
 }
 
+tasks.test {
+    // HytaleLogger refuses to initialise unless the JUL log manager is Hytale's own.
+    // The server sets this at startup; tests must set it themselves.
+    systemProperty("java.util.logging.manager", "com.hypixel.hytale.logger.backend.HytaleLogManager")
+}
+
 tasks.jar {
     // Set the archive name
     archiveBaseName.set("rcon")

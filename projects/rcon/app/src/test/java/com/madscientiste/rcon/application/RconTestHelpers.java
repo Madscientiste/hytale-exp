@@ -152,9 +152,11 @@ public class RconTestHelpers {
 
   public static void assertCommandRejected(Socket socket, String command) throws IOException {
     RconPacket commandPacket = new RconPacket(200, RconPacket.SERVERDATA_EXECCOMMAND, command);
-    sendPacket(socket, commandPacket);
 
+    // A closed connection also counts as rejected: the server may close the socket before the
+    // write (e.g. after a failed auth), so the write itself can fail with a broken pipe.
     try {
+      sendPacket(socket, commandPacket);
       RconPacket response = readResponse(socket);
       if (response.getType() == RconPacket.SERVERDATA_RESPONSE_VALUE
           && !response.getBody().contains("Error")

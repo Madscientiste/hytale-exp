@@ -32,7 +32,7 @@ public class RconCommandSender implements CommandSender {
 
   @Override
   @Nonnull
-  public String getDisplayName() {
+  public String getUsername() {
     return "RCON";
   }
 
