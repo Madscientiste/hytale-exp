@@ -5,8 +5,13 @@ on:
     tags:
       - '*-v*'
 
+# Same server build as ci.yml: the plugins compile against its HytaleServer.jar
+env:
+  HYTALE_SERVER_VERSION: "2026.01.15-c04fdfe10"
+
 permissions:
   contents: write
+  packages: read
 
 jobs:
   release:
@@ -23,6 +28,49 @@ jobs:
         with:
           java-version: '25'
           distribution: 'temurin'
+
+      # The build needs libs/HytaleServer.jar (not in git); same steps as ci.yml
+      - name: Cache server files
+        uses: actions/cache@v4
+        with:
+          path: libs/
+          key: server-files-${{ runner.os }}-${{ env.HYTALE_SERVER_VERSION }}
+
+      - name: Check if server files exist
+        id: check-server-files
+        run: |
+          if [ -f libs/HytaleServer.jar ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Log in to GitHub Container Registry
+        if: steps.check-server-files.outputs.exists != 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract server jar
+        if: steps.check-server-files.outputs.exists != 'true'
+        run: |
+          mkdir -p libs server-files
+          docker create --name hytale-server-extract \
+            ghcr.io/madscientiste/hytale-server:${{ env.HYTALE_SERVER_VERSION }}
+          docker cp hytale-server-extract:/server ./server-files
+          docker rm hytale-server-extract
+
+          HS_JAR=$(find ./server-files -name "hs-*.jar" | head -1)
+          if [ -z "$HS_JAR" ]; then
+            echo "Error: hs-*.jar not found in server-files"
+            ls -la ./server-files
+            exit 1
+          fi
+          cp "$HS_JAR" ./libs/HytaleServer.jar
+          echo "Copied $(basename "$HS_JAR") to HytaleServer.jar"
+          rm -rf ./server-files
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
