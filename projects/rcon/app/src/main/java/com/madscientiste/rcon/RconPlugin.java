@@ -3,6 +3,7 @@ package com.madscientiste.rcon;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.JavaPluginInit;
 import com.madscientiste.rcon.infrastructure.AuthenticationService;
+import com.madscientiste.rcon.infrastructure.ConfigException;
 import com.madscientiste.rcon.infrastructure.ConfigLoader;
 import com.madscientiste.rcon.infrastructure.RconConfig;
 import com.madscientiste.rcon.infrastructure.RconConstants;
@@ -42,14 +43,48 @@ public class RconPlugin extends JavaPlugin {
 
     Path configPath = Path.of(RconConstants.CONFIG_DIR, RconConstants.CONFIG_FILENAME);
     ConfigLoader loader = new ConfigLoader(configPath);
-    RconConfig config = loader.load();
+    RconConfig config;
+    try {
+      config = loader.load();
+    } catch (ConfigException e) {
+      // A config that exists but cannot be used is never replaced with defaults and a new
+      // password: RCON stays off until the file is fixed.
+      getRconLogger()
+          .atSevere()
+          .log(
+              "RCON is DISABLED: the config file cannot be used (%s). The file was left"
+                  + " untouched. Fix or delete it, then restart the server.",
+              e.getMessage());
+      return;
+    }
+
+    try {
+      if (loader.restrictPermissions()) {
+        getRconLogger()
+            .atInfo()
+            .log("%s was readable by other users; it is now owner-only (mode 600)", configPath);
+      }
+    } catch (Exception e) {
+      getRconLogger()
+          .atWarning()
+          .log(
+              "%s holds the RCON password hash and is readable by other users, and its"
+                  + " permissions could not be changed: %s",
+              configPath, e.toString());
+    }
 
     if (!config.requiresPassword()) {
       String generatedPassword = AuthenticationService.generateSecurePassword();
       String hashedPassword = AuthenticationService.hashPassword(generatedPassword);
 
       RconConfig updated = config.withPasswordHash(hashedPassword);
-      loader.save(updated);
+      if (!loader.save(updated)) {
+        getRconLogger()
+            .atWarning()
+            .log(
+                "Could not write %s: the password below is only valid until the server restarts",
+                configPath);
+      }
 
       getRconLogger()
           .atWarning()
@@ -69,6 +104,11 @@ public class RconPlugin extends JavaPlugin {
 
   @Override
   protected void start() {
+    if (rconServer == null) {
+      // setup() refused the config and already said why
+      return;
+    }
+
     try {
       rconServer.start();
       RconConfig config = rconServer.getConfig();

@@ -36,8 +36,7 @@ public class RconResourceSafetyTest {
     socket.setSoTimeout(100); // Set socket timeout
     try {
       // Connect but do nothing
-      // Wait for timeout (readTimeoutMs = 5000ms)
-      // Note: cleanupIdleConnections needs to be called, or socket read timeout will trigger
+      // Wait past the login deadline (authTimeoutMs = 5000ms): the server closes the connection
       Thread.sleep(6000);
 
       // Try to read - should timeout or connection closed

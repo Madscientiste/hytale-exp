@@ -18,14 +18,21 @@ public enum LogEvent {
 
   /** Connection closed at transport level */
   TRANSPORT_DISCONNECT(
-      "disconnect", Level.INFO, Set.of("connection_id", "reason"), Set.of("session_duration_ms")),
+      "disconnect",
+      Level.INFO,
+      Set.of("connection_id", "reason"),
+      Set.of("session_duration_ms", "remote_ip")),
 
   /** Socket-level errors and IO failures */
-  TRANSPORT_ERROR("error", Level.SEVERE, Set.of("error_type", "message"), Set.of("connection_id")),
+  TRANSPORT_ERROR(
+      "error", Level.SEVERE, Set.of("error_type", "message"), Set.of("connection_id", "remote_ip")),
 
-  /** Rate limiting triggered */
+  /** A limit was hit: connection refused (ban, per-address cap, server full) or address banned */
   TRANSPORT_RATE_LIMIT(
-      "rate_limit", Level.WARNING, Set.of("remote_ip", "action", "count", "time_window_ms")),
+      "rate_limit",
+      Level.WARNING,
+      Set.of("remote_ip", "action", "count", "time_window_ms"),
+      Set.of("reason")),
 
   // ============================================================================
   // PROTOCOL Layer Events
@@ -40,14 +47,14 @@ public enum LogEvent {
       "packet.invalid",
       Level.WARNING,
       Set.of("violation_type"),
-      Set.of("connection_id", "remote_ip")),
+      Set.of("connection_id", "remote_ip", "message")),
 
   /** Authentication at protocol level */
   PROTOCOL_AUTH(
       "auth",
       Level.INFO,
       Set.of("connection_id", "result"),
-      Set.of("failure_reason", "attempt_number")),
+      Set.of("failure_reason", "attempt_number", "remote_ip")),
 
   /** Protocol parsing or state machine errors */
   PROTOCOL_ERROR("error", Level.SEVERE, Set.of("error_code", "message"), Set.of("connection_id")),
@@ -57,7 +64,8 @@ public enum LogEvent {
   // ============================================================================
 
   /** Session started (transition from connection to usable session) */
-  APPLICATION_SESSION_START("session.start", Level.INFO, Set.of("connection_id", "authenticated")),
+  APPLICATION_SESSION_START(
+      "session.start", Level.INFO, Set.of("connection_id", "authenticated"), Set.of("remote_ip")),
 
   /** Session ended with summary */
   APPLICATION_SESSION_END(
@@ -71,7 +79,7 @@ public enum LogEvent {
 
   /** Application-level logic errors */
   APPLICATION_ERROR(
-      "error", Level.SEVERE, Set.of("error_code", "message"), Set.of("connection_id")),
+      "error", Level.SEVERE, Set.of("error_code", "message"), Set.of("connection_id", "remote_ip")),
 
   // ============================================================================
   // COMMAND Layer Events
@@ -82,7 +90,7 @@ public enum LogEvent {
       "execute",
       Level.INFO,
       Set.of("connection_id", "command_name", "result"),
-      Set.of("execution_time_ms")),
+      Set.of("execution_time_ms", "command", "remote_ip")),
 
   /** Debug-level command execution details */
   COMMAND_EXECUTE_DEBUG(

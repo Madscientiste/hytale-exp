@@ -1,24 +1,49 @@
 package com.madscientiste.rcon.protocol;
 
 import com.madscientiste.rcon.infrastructure.RconConstants;
-import com.madscientiste.rcon.logging.LogEvent;
 import com.madscientiste.rcon.logging.RconLogger;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
 public class RconProtocol {
 
-  public static final int MAX_FRAME_SIZE = 4096;
+  /** Default limit for a packet (size prefix included); the config can change it. */
+  public static final int MAX_FRAME_SIZE = RconConstants.DEFAULT_MAX_FRAME_SIZE;
+
   public static final int HEADER_SIZE = 4;
+
+  /** Bytes in a packet besides the body: size, id, type and the two null terminators. */
+  public static final int PACKET_OVERHEAD = 14;
+
+  /** Request id of a failed login reply, as the RCON protocol defines it. */
+  public static final int AUTH_FAILED_ID = -1;
 
   private final RconLogger logger = RconLogger.createPluginLogger(RconConstants.LOGGER_PROTOCOL);
 
-  public RconProtocol() {}
+  /** Largest packet accepted from a client, size prefix included. */
+  private final int maxFrameSize;
+
+  /** Largest packet sent to a client, size prefix included. */
+  private final int maxOutboundSize;
+
+  public RconProtocol() {
+    this(MAX_FRAME_SIZE);
+  }
+
+  public RconProtocol(int maxFrameSize) {
+    this.maxFrameSize = maxFrameSize;
+    this.maxOutboundSize = Math.min(maxFrameSize, RconConstants.MAX_OUTBOUND_PACKET_SIZE);
+  }
+
+  public int getMaxFrameSize() {
+    return maxFrameSize;
+  }
 
   public ProtocolResult parseBytes(String connectionId, byte[] data) {
     try {
-      if (data.length > MAX_FRAME_SIZE) {
-        return new ProtocolError("Frame too large: " + data.length + " > " + MAX_FRAME_SIZE);
+      if (data.length > maxFrameSize) {
+        return new ProtocolError("Frame too large: " + data.length + " > " + maxFrameSize);
       }
 
       if (data.length < HEADER_SIZE) {
@@ -31,7 +56,7 @@ public class RconProtocol {
       while (offset < data.length) {
         int packetSize = readIntLittleEndian(data, offset);
 
-        if (packetSize < 10 || packetSize > MAX_FRAME_SIZE) {
+        if (packetSize < 10 || packetSize > maxFrameSize) {
           return new ProtocolError("Invalid packet size: " + packetSize);
         }
 
@@ -66,14 +91,8 @@ public class RconProtocol {
           }
 
         } catch (ProtocolException e) {
-          // Log protocol error for packet parsing failure
-          logger
-              .event(LogEvent.PROTOCOL_ERROR)
-              .withParam("error_code", "packet_parsing_failed")
-              .withParam("message", "Packet parsing failed: " + e.getMessage())
-              .withOptionalParam("connection_id", connectionId)
-              .withCause(e)
-              .log();
+          // A malformed packet is the peer's doing, not a server fault: the caller logs one
+          // "packet.invalid" line. No stack trace here, or junk input could flood the log.
           return new ProtocolError("Packet parsing failed: " + e.getMessage());
         }
       }
@@ -92,7 +111,7 @@ public class RconProtocol {
   public byte[] formatPacket(RconPacket packet) {
     byte[] data = packet.toBytes();
 
-    if (data.length > MAX_FRAME_SIZE) {
+    if (data.length > maxOutboundSize) {
       throw new RuntimeException("Packet too large: " + data.length);
     }
 
@@ -103,12 +122,48 @@ public class RconProtocol {
     return data;
   }
 
+  /**
+   * Reply to a login. On success the request id is echoed; on failure the id is -1, which is how
+   * RCON clients tell a refused login from an accepted one.
+   */
   public RconPacket createAuthResponse(int requestId, boolean success) {
-    return new RconPacket(requestId, RconPacket.SERVERDATA_AUTH_RESPONSE, success ? "1" : "-1");
+    return new RconPacket(
+        success ? requestId : AUTH_FAILED_ID,
+        RconPacket.SERVERDATA_AUTH_RESPONSE,
+        success ? "1" : "-1");
   }
 
   public RconPacket createCommandResponse(int requestId, String response) {
     return new RconPacket(requestId, RconPacket.SERVERDATA_RESPONSE_VALUE, response);
+  }
+
+  /**
+   * Reply to a command. A reply that does not fit in one packet is split over several packets with
+   * the same request id, in order, as Source and Minecraft servers do. Never splits inside a UTF-8
+   * character.
+   */
+  public List<RconPacket> createCommandResponses(int requestId, String response) {
+    byte[] bytes = (response != null ? response : "").getBytes(StandardCharsets.UTF_8);
+    int maxBody = maxOutboundSize - PACKET_OVERHEAD;
+    List<RconPacket> packets = new ArrayList<>();
+
+    int start = 0;
+    do {
+      int end = Math.min(start + maxBody, bytes.length);
+      // Step back to the start of a character: continuation bytes look like 10xxxxxx
+      while (end < bytes.length && end > start && (bytes[end] & 0xC0) == 0x80) {
+        end--;
+      }
+      if (end == start && end < bytes.length) {
+        // Cannot happen with a body of 4 bytes or more; never loop forever
+        end = Math.min(start + maxBody, bytes.length);
+      }
+      String part = new String(bytes, start, end - start, StandardCharsets.UTF_8);
+      packets.add(new RconPacket(requestId, RconPacket.SERVERDATA_RESPONSE_VALUE, part));
+      start = end;
+    } while (start < bytes.length);
+
+    return packets;
   }
 
   private int readIntLittleEndian(byte[] buffer, int offset) {

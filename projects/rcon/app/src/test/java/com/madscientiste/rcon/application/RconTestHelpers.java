@@ -127,12 +127,16 @@ public class RconTestHelpers {
     }
   }
 
+  /** A refused login is answered with id -1, whatever id the request had. */
   public static void assertAuthFailure(Socket socket, int requestId)
       throws IOException, ProtocolException {
     RconPacket response = readResponse(socket);
-    if (response.getId() != requestId) {
+    if (response.getId() != -1) {
       throw new AssertionError(
-          "Response ID mismatch: expected " + requestId + ", got " + response.getId());
+          "A refused login (request "
+              + requestId
+              + ") must be answered with id -1, got "
+              + response.getId());
     }
     if (response.getType() != RconPacket.SERVERDATA_AUTH_RESPONSE) {
       throw new AssertionError("Expected AUTH_RESPONSE, got type " + response.getType());

@@ -11,7 +11,8 @@ public class ConnectionState {
     CLOSED // Connection terminated
   }
 
-  private State current = State.UNAUTHENTICATED;
+  // Read by the connection's own thread; close() can come from another one
+  private volatile State current = State.UNAUTHENTICATED;
 
   /**
    * Processes a packet and updates state if valid transition.

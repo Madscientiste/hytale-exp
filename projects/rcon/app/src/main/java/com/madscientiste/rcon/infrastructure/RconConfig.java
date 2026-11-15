@@ -11,79 +11,86 @@ public class RconConfig {
   private final String host;
   private final int port;
   private final int maxConnections;
+  private final int maxConnectionsPerIp;
   private final int maxFrameSize;
   private final int readTimeoutMs;
   private final int connectionTimeoutMs;
+  private final int authTimeoutMs;
+  private final int authMaxFailures;
+  private final int authFailureWindowMs;
+  private final int authBanMs;
   @Nullable private final String passwordHash;
 
   // Private constructor - use Builder
-  private RconConfig(
-      String host,
-      int port,
-      int maxConnections,
-      int maxFrameSize,
-      int readTimeoutMs,
-      int connectionTimeoutMs,
-      @Nullable String passwordHash) {
-    // Validation
-    if (host == null || host.isEmpty()) {
+  private RconConfig(Builder b) {
+    if (b.host == null || b.host.isEmpty()) {
       throw new IllegalArgumentException("host must be non-null and non-empty");
     }
-    if (host.length() > RconConstants.MAX_HOST_LENGTH) {
+    if (b.host.length() > RconConstants.MAX_HOST_LENGTH) {
       throw new IllegalArgumentException("host length must be <= " + RconConstants.MAX_HOST_LENGTH);
     }
-    if (port < RconConstants.MIN_PORT || port > RconConstants.MAX_PORT) {
+    requireRange("port", b.port, RconConstants.MIN_PORT, RconConstants.MAX_PORT);
+    requireRange(
+        "maxConnections",
+        b.maxConnections,
+        RconConstants.MIN_CONNECTIONS,
+        RconConstants.MAX_CONNECTIONS);
+    requireRange(
+        "maxConnectionsPerIp",
+        b.maxConnectionsPerIp,
+        RconConstants.MIN_CONNECTIONS,
+        RconConstants.MAX_CONNECTIONS);
+    requireRange(
+        "maxFrameSize", b.maxFrameSize, RconConstants.MIN_FRAME_SIZE, RconConstants.MAX_FRAME_SIZE);
+    requireRange(
+        "readTimeoutMs",
+        b.readTimeoutMs,
+        RconConstants.MIN_TIMEOUT_MS,
+        RconConstants.MAX_READ_TIMEOUT_MS);
+    requireRange(
+        "connectionTimeoutMs",
+        b.connectionTimeoutMs,
+        RconConstants.MIN_TIMEOUT_MS,
+        RconConstants.MAX_CONNECTION_TIMEOUT_MS);
+    requireRange(
+        "authTimeoutMs",
+        b.authTimeoutMs,
+        RconConstants.MIN_TIMEOUT_MS,
+        RconConstants.MAX_AUTH_TIMEOUT_MS);
+    requireRange("authMaxFailures", b.authMaxFailures, 1, RconConstants.MAX_AUTH_FAILURES);
+    requireRange(
+        "authFailureWindowMs",
+        b.authFailureWindowMs,
+        RconConstants.MIN_TIMEOUT_MS,
+        RconConstants.MAX_AUTH_PERIOD_MS);
+    requireRange(
+        "authBanMs", b.authBanMs, RconConstants.MIN_TIMEOUT_MS, RconConstants.MAX_AUTH_PERIOD_MS);
+    if (b.passwordHash != null && !AuthenticationService.isValidHash(b.passwordHash)) {
       throw new IllegalArgumentException(
-          "port must be between " + RconConstants.MIN_PORT + " and " + RconConstants.MAX_PORT);
-    }
-    if (maxConnections < RconConstants.MIN_CONNECTIONS
-        || maxConnections > RconConstants.MAX_CONNECTIONS) {
-      throw new IllegalArgumentException(
-          "maxConnections must be between "
-              + RconConstants.MIN_CONNECTIONS
-              + " and "
-              + RconConstants.MAX_CONNECTIONS);
-    }
-    if (maxFrameSize < RconConstants.MIN_FRAME_SIZE
-        || maxFrameSize > RconConstants.MAX_FRAME_SIZE) {
-      throw new IllegalArgumentException(
-          "maxFrameSize must be between "
-              + RconConstants.MIN_FRAME_SIZE
-              + " and "
-              + RconConstants.MAX_FRAME_SIZE);
-    }
-    if (readTimeoutMs < RconConstants.MIN_TIMEOUT_MS
-        || readTimeoutMs > RconConstants.MAX_READ_TIMEOUT_MS) {
-      throw new IllegalArgumentException(
-          "readTimeoutMs must be between "
-              + RconConstants.MIN_TIMEOUT_MS
-              + " and "
-              + RconConstants.MAX_READ_TIMEOUT_MS);
-    }
-    if (connectionTimeoutMs < RconConstants.MIN_TIMEOUT_MS
-        || connectionTimeoutMs > RconConstants.MAX_CONNECTION_TIMEOUT_MS) {
-      throw new IllegalArgumentException(
-          "connectionTimeoutMs must be between "
-              + RconConstants.MIN_TIMEOUT_MS
-              + " and "
-              + RconConstants.MAX_CONNECTION_TIMEOUT_MS);
-    }
-    if (passwordHash != null) {
-      if (passwordHash.isEmpty()) {
-        throw new IllegalArgumentException("passwordHash cannot be empty if non-null");
-      }
-      if (!passwordHash.contains(":")) {
-        throw new IllegalArgumentException("passwordHash must be in format salt:hash");
-      }
+          "passwordHash is not a valid hash (expected "
+              + AuthenticationService.HASH_FORMAT_DESCRIPTION
+              + ")");
     }
 
-    this.host = host;
-    this.port = port;
-    this.maxConnections = maxConnections;
-    this.maxFrameSize = maxFrameSize;
-    this.readTimeoutMs = readTimeoutMs;
-    this.connectionTimeoutMs = connectionTimeoutMs;
-    this.passwordHash = passwordHash;
+    this.host = b.host;
+    this.port = b.port;
+    this.maxConnections = b.maxConnections;
+    this.maxConnectionsPerIp = b.maxConnectionsPerIp;
+    this.maxFrameSize = b.maxFrameSize;
+    this.readTimeoutMs = b.readTimeoutMs;
+    this.connectionTimeoutMs = b.connectionTimeoutMs;
+    this.authTimeoutMs = b.authTimeoutMs;
+    this.authMaxFailures = b.authMaxFailures;
+    this.authFailureWindowMs = b.authFailureWindowMs;
+    this.authBanMs = b.authBanMs;
+    this.passwordHash = b.passwordHash;
+  }
+
+  private static void requireRange(String name, int value, int min, int max) {
+    if (value < min || value > max) {
+      throw new IllegalArgumentException(
+          name + " must be between " + min + " and " + max + " (got " + value + ")");
+    }
   }
 
   public String getHost() {
@@ -98,16 +105,41 @@ public class RconConfig {
     return maxConnections;
   }
 
+  /** Maximum concurrent connections from one address. */
+  public int getMaxConnectionsPerIp() {
+    return maxConnectionsPerIp;
+  }
+
+  /** Largest packet (size prefix included) a client may send, in bytes. */
   public int getMaxFrameSize() {
     return maxFrameSize;
   }
 
+  /** How long an authenticated connection may stay silent before it is closed. */
   public int getReadTimeoutMs() {
     return readTimeoutMs;
   }
 
   public int getConnectionTimeoutMs() {
     return connectionTimeoutMs;
+  }
+
+  /** How long a new connection has to log in before it is closed. */
+  public int getAuthTimeoutMs() {
+    return authTimeoutMs;
+  }
+
+  /** Wrong passwords from one address, within the failure window, that trigger a ban. */
+  public int getAuthMaxFailures() {
+    return authMaxFailures;
+  }
+
+  public int getAuthFailureWindowMs() {
+    return authFailureWindowMs;
+  }
+
+  public int getAuthBanMs() {
+    return authBanMs;
   }
 
   @Nullable
@@ -127,8 +159,7 @@ public class RconConfig {
    */
   @Nonnull
   public RconConfig withPasswordHash(@Nullable String newHash) {
-    return new RconConfig(
-        host, port, maxConnections, maxFrameSize, readTimeoutMs, connectionTimeoutMs, newHash);
+    return toBuilder().passwordHash(newHash).build();
   }
 
   /**
@@ -141,14 +172,36 @@ public class RconConfig {
     return new Builder();
   }
 
+  @Nonnull
+  private Builder toBuilder() {
+    return new Builder()
+        .host(host)
+        .port(port)
+        .maxConnections(maxConnections)
+        .maxConnectionsPerIp(maxConnectionsPerIp)
+        .maxFrameSize(maxFrameSize)
+        .readTimeoutMs(readTimeoutMs)
+        .connectionTimeoutMs(connectionTimeoutMs)
+        .authTimeoutMs(authTimeoutMs)
+        .authMaxFailures(authMaxFailures)
+        .authFailureWindowMs(authFailureWindowMs)
+        .authBanMs(authBanMs)
+        .passwordHash(passwordHash);
+  }
+
   /** Builder for creating RconConfig instances. */
   public static class Builder {
     private String host = RconConstants.DEFAULT_HOST;
     private int port = RconConstants.DEFAULT_PORT;
     private int maxConnections = RconConstants.DEFAULT_MAX_CONNECTIONS;
+    private int maxConnectionsPerIp = RconConstants.DEFAULT_MAX_CONNECTIONS_PER_IP;
     private int maxFrameSize = RconConstants.DEFAULT_MAX_FRAME_SIZE;
     private int readTimeoutMs = RconConstants.DEFAULT_READ_TIMEOUT_MS;
     private int connectionTimeoutMs = RconConstants.DEFAULT_CONNECTION_TIMEOUT_MS;
+    private int authTimeoutMs = RconConstants.DEFAULT_AUTH_TIMEOUT_MS;
+    private int authMaxFailures = RconConstants.DEFAULT_AUTH_MAX_FAILURES;
+    private int authFailureWindowMs = RconConstants.DEFAULT_AUTH_FAILURE_WINDOW_MS;
+    private int authBanMs = RconConstants.DEFAULT_AUTH_BAN_MS;
     @Nullable private String passwordHash = null;
 
     private Builder() {}
@@ -172,6 +225,12 @@ public class RconConfig {
     }
 
     @Nonnull
+    public Builder maxConnectionsPerIp(int maxConnectionsPerIp) {
+      this.maxConnectionsPerIp = maxConnectionsPerIp;
+      return this;
+    }
+
+    @Nonnull
     public Builder maxFrameSize(int maxFrameSize) {
       this.maxFrameSize = maxFrameSize;
       return this;
@@ -190,6 +249,30 @@ public class RconConfig {
     }
 
     @Nonnull
+    public Builder authTimeoutMs(int authTimeoutMs) {
+      this.authTimeoutMs = authTimeoutMs;
+      return this;
+    }
+
+    @Nonnull
+    public Builder authMaxFailures(int authMaxFailures) {
+      this.authMaxFailures = authMaxFailures;
+      return this;
+    }
+
+    @Nonnull
+    public Builder authFailureWindowMs(int authFailureWindowMs) {
+      this.authFailureWindowMs = authFailureWindowMs;
+      return this;
+    }
+
+    @Nonnull
+    public Builder authBanMs(int authBanMs) {
+      this.authBanMs = authBanMs;
+      return this;
+    }
+
+    @Nonnull
     public Builder passwordHash(@Nullable String passwordHash) {
       this.passwordHash = passwordHash;
       return this;
@@ -203,14 +286,7 @@ public class RconConfig {
      */
     @Nonnull
     public RconConfig build() {
-      return new RconConfig(
-          host,
-          port,
-          maxConnections,
-          maxFrameSize,
-          readTimeoutMs,
-          connectionTimeoutMs,
-          passwordHash);
+      return new RconConfig(this);
     }
   }
 
@@ -224,12 +300,22 @@ public class RconConfig {
         + port
         + ", maxConnections="
         + maxConnections
+        + ", maxConnectionsPerIp="
+        + maxConnectionsPerIp
         + ", maxFrameSize="
         + maxFrameSize
         + ", readTimeoutMs="
         + readTimeoutMs
         + ", connectionTimeoutMs="
         + connectionTimeoutMs
+        + ", authTimeoutMs="
+        + authTimeoutMs
+        + ", authMaxFailures="
+        + authMaxFailures
+        + ", authFailureWindowMs="
+        + authFailureWindowMs
+        + ", authBanMs="
+        + authBanMs
         + ", hasPassword="
         + requiresPassword()
         + '}';

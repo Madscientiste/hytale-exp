@@ -2,14 +2,23 @@ package com.madscientiste.rcon;
 
 import com.madscientiste.rcon.application.RconApplication;
 import com.madscientiste.rcon.command.CommandDispatcher;
+import com.madscientiste.rcon.infrastructure.AuthFailureTracker;
+import com.madscientiste.rcon.infrastructure.AuthenticationService;
 import com.madscientiste.rcon.infrastructure.RconConfig;
 import com.madscientiste.rcon.infrastructure.RconConstants;
 import com.madscientiste.rcon.logging.LogEvent;
+import com.madscientiste.rcon.logging.LogThrottle;
 import com.madscientiste.rcon.logging.RconLogger;
 import com.madscientiste.rcon.protocol.RconProtocol;
 import com.madscientiste.rcon.transport.RconTransport;
 
 public class RconServer {
+
+  /** A peer that has not logged in may cause this many log lines per window, per address. */
+  private static final int PRE_AUTH_LOG_LINES = 20;
+
+  private static final long PRE_AUTH_LOG_WINDOW_MS = 10_000;
+  private static final int PRE_AUTH_LOG_MAX_ADDRESSES = 4096;
 
   private final RconConfig config;
 
@@ -32,10 +41,25 @@ public class RconServer {
     }
 
     try {
-      protocol = new RconProtocol();
+      if (AuthenticationService.isLegacyHash(config.getPasswordHash())) {
+        logger.atWarning().log(
+            "The RCON passwordHash uses the old format (one round of SHA-256). It still works,"
+                + " but is fast to crack if the config file leaks. Generate a new hash to"
+                + " upgrade it.");
+      }
+
+      AuthFailureTracker authFailures =
+          new AuthFailureTracker(
+              config.getAuthMaxFailures(), config.getAuthFailureWindowMs(), config.getAuthBanMs());
+      LogThrottle preAuthLogs =
+          new LogThrottle(PRE_AUTH_LOG_LINES, PRE_AUTH_LOG_WINDOW_MS, PRE_AUTH_LOG_MAX_ADDRESSES);
+
+      protocol = new RconProtocol(config.getMaxFrameSize());
       commandDispatcher = new CommandDispatcher();
-      transport = new RconTransport(config, null);
-      application = new RconApplication(transport, protocol, commandDispatcher, config);
+      transport = new RconTransport(config, null, authFailures, preAuthLogs);
+      application =
+          new RconApplication(
+              transport, protocol, commandDispatcher, config, authFailures, preAuthLogs);
 
       transport.setCallbacks(application);
 

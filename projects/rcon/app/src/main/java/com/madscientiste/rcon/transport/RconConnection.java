@@ -1,17 +1,35 @@
 package com.madscientiste.rcon.transport;
 
+import com.madscientiste.rcon.infrastructure.AuthFailureTracker;
+import com.madscientiste.rcon.infrastructure.RconConfig;
 import com.madscientiste.rcon.infrastructure.RconConstants;
 import com.madscientiste.rcon.logging.LogEvent;
+import com.madscientiste.rcon.logging.LogThrottle;
 import com.madscientiste.rcon.logging.RconLogger;
-import com.madscientiste.rcon.protocol.RconProtocol;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Represents a single client connection. Handles socket IO, timeouts, and connection lifecycle. */
+/**
+ * Represents a single client connection. Handles socket IO, timeouts, and connection lifecycle.
+ *
+ * <p>Two deadlines apply, and neither can be pushed back by trickling bytes:
+ *
+ * <ul>
+ *   <li>Before login: the connection is closed {@code authTimeoutMs} after it was accepted.
+ *   <li>After login: the connection is closed when no complete packet was exchanged for {@code
+ *       readTimeoutMs}.
+ * </ul>
+ */
 public class RconConnection {
+
+  private static final int HEADER_SIZE = 4;
+  private static final int READ_CHUNK_SIZE = 4096;
 
   private final String id;
   private final Socket socket;
@@ -24,22 +42,50 @@ public class RconConnection {
   private final Thread readThread;
   private final RconLogger logger = RconLogger.createPluginLogger(RconConstants.LOGGER_TRANSPORT);
 
-  private volatile long lastActivity = System.currentTimeMillis();
+  private final String remoteIp;
+  private final String addressKey;
+  private final LogThrottle preAuthLogs;
+
+  private final int authTimeoutMs;
+  private final int readTimeoutMs;
+
+  /** Largest value of a packet's size field (the packet without its 4-byte size prefix). */
+  private final int maxPacketSize;
+
+  /** One incomplete packet plus one read can be buffered, never more. */
+  private final int maxBufferSize;
+
+  private final long connectedAt = System.currentTimeMillis();
+  private volatile long lastActivity = connectedAt;
+  private volatile boolean authenticated = false;
 
   // Buffer for accumulating partial packets (TCP fragmentation handling)
   private final java.io.ByteArrayOutputStream readBuffer = new java.io.ByteArrayOutputStream();
-  private static final int HEADER_SIZE = 4;
-  private static final int MAX_BUFFER_SIZE = RconProtocol.MAX_FRAME_SIZE * 2; // Allow some headroom
 
   public RconConnection(
-      String id, Socket socket, TransportCallbacks callbacks, RconTransport transport)
-      throws Exception {
+      String id,
+      Socket socket,
+      TransportCallbacks callbacks,
+      RconTransport transport,
+      RconConfig config,
+      LogThrottle preAuthLogs)
+      throws IOException {
     this.id = id;
     this.socket = socket;
     this.callbacks = callbacks;
     this.transport = transport;
+    this.preAuthLogs = preAuthLogs;
     this.input = socket.getInputStream();
     this.output = socket.getOutputStream();
+
+    InetAddress address = socket.getInetAddress();
+    this.remoteIp = address.getHostAddress();
+    this.addressKey = AuthFailureTracker.keyFor(address);
+
+    this.authTimeoutMs = config.getAuthTimeoutMs();
+    this.readTimeoutMs = config.getReadTimeoutMs();
+    this.maxPacketSize = config.getMaxFrameSize() - HEADER_SIZE;
+    this.maxBufferSize = config.getMaxFrameSize() + READ_CHUNK_SIZE;
 
     // Start read thread for this connection
     this.readThread = new Thread(this::readLoop, "RconRead-" + id);
@@ -57,10 +103,23 @@ public class RconConnection {
    */
   private void readLoop() {
     try {
-      byte[] buffer = new byte[4096];
+      byte[] buffer = new byte[READ_CHUNK_SIZE];
 
       while (!closed.get() && !Thread.currentThread().isInterrupted()) {
-        int bytesRead = input.read(buffer);
+        long remaining = deadline() - System.currentTimeMillis();
+        if (remaining <= 0) {
+          close(authenticated ? "Idle timeout" : "Login timeout");
+          return;
+        }
+
+        int bytesRead;
+        try {
+          // Wait no longer than the deadline, however slowly bytes arrive
+          socket.setSoTimeout((int) Math.min(remaining, Integer.MAX_VALUE));
+          bytesRead = input.read(buffer);
+        } catch (SocketTimeoutException e) {
+          continue; // The deadline check above closes the connection
+        }
 
         if (bytesRead == -1) {
           close("Client disconnected");
@@ -68,30 +127,23 @@ public class RconConnection {
         }
 
         if (bytesRead > 0) {
-          updateActivity();
-
-          // Add to read buffer
-          synchronized (readBuffer) {
-            // Prevent buffer from growing unbounded
-            if (readBuffer.size() + bytesRead > MAX_BUFFER_SIZE) {
-              logger
-                  .event(LogEvent.TRANSPORT_ERROR)
-                  .withParam("error_type", "buffer_overflow")
-                  .withParam("message", "Read buffer overflow")
-                  .withOptionalParam("connection_id", id)
-                  .log();
-              close("Read buffer overflow");
-              return;
-            }
-
-            readBuffer.write(buffer, 0, bytesRead);
-
-            // Process complete packets from buffer
-            processCompletePackets();
+          // Prevent buffer from growing unbounded
+          if (readBuffer.size() + bytesRead > maxBufferSize) {
+            close("Read buffer overflow");
+            return;
           }
+
+          readBuffer.write(buffer, 0, bytesRead);
+
+          // Process complete packets from buffer
+          processCompletePackets();
         }
       }
 
+    } catch (IOException e) {
+      // The peer went away or the socket was closed under us. Routine, and anyone can cause it,
+      // so it is only the reason on the disconnect line: no error entry, no stack trace.
+      close("Read error: " + e.getMessage());
     } catch (Exception e) {
       if (!closed.get()) {
         logger
@@ -99,42 +151,36 @@ public class RconConnection {
             .withParam("error_type", "read_error")
             .withParam("message", "Read error: " + e.getMessage())
             .withOptionalParam("connection_id", id)
+            .withOptionalParam("remote_ip", remoteIp)
             .withCause(e)
+            .throttledBy(preAuthLogThrottle(), addressKey)
             .log();
         close("Read error: " + e.getMessage());
       }
     }
   }
 
+  /** When this connection must be closed if nothing more happens. */
+  private long deadline() {
+    return authenticated ? lastActivity + readTimeoutMs : connectedAt + authTimeoutMs;
+  }
+
   /**
    * Process complete packets from the read buffer. Extracts length-prefixed packets and passes them
-   * to callbacks.
+   * to callbacks. Stops as soon as the connection is closed: packets still in the buffer after a
+   * failed login or a protocol error are never handled.
    */
   private void processCompletePackets() {
     byte[] bufferData = readBuffer.toByteArray();
     int offset = 0;
 
-    while (offset < bufferData.length) {
-      // Need at least HEADER_SIZE to read packet length
-      if (bufferData.length - offset < HEADER_SIZE) {
-        break; // Not enough data for header
-      }
-
+    while (!closed.get() && bufferData.length - offset >= HEADER_SIZE) {
       // Read packet size (little-endian)
       int packetSize = readIntLittleEndian(bufferData, offset);
 
-      // Validate packet size (protocol layer should handle this, but we catch it here too)
-      if (packetSize < 10 || packetSize > RconProtocol.MAX_FRAME_SIZE) {
-        // This is a protocol violation, but we're at transport layer
-        // The protocol layer will log it properly
+      // Validate packet size before waiting for the rest of the packet
+      if (packetSize < 10 || packetSize > maxPacketSize) {
         close("Invalid packet size: " + packetSize);
-        return;
-      }
-
-      // Check for integer overflow
-      if (offset > Integer.MAX_VALUE - HEADER_SIZE - packetSize) {
-        // Protocol violation
-        close("Packet size overflow");
         return;
       }
 
@@ -148,26 +194,16 @@ public class RconConnection {
       // Extract complete packet
       byte[] packetData = new byte[totalPacketSize];
       System.arraycopy(bufferData, offset, packetData, 0, totalPacketSize);
-
-      // Remove processed data from buffer
-      byte[] remaining = new byte[bufferData.length - offset - totalPacketSize];
-      if (remaining.length > 0) {
-        System.arraycopy(bufferData, offset + totalPacketSize, remaining, 0, remaining.length);
-      }
-      readBuffer.reset();
-      if (remaining.length > 0) {
-        readBuffer.write(remaining, 0, remaining.length);
-      }
-
-      // Process packet
-      callbacks.onBytesReceived(id, packetData);
-
-      // Update offset for next iteration
       offset += totalPacketSize;
 
-      // Reset offset since we've consumed the data
-      bufferData = readBuffer.toByteArray();
-      offset = 0;
+      updateActivity();
+      callbacks.onBytesReceived(id, packetData);
+    }
+
+    // Keep what was not consumed (an incomplete packet) for the next read
+    readBuffer.reset();
+    if (!closed.get() && offset < bufferData.length) {
+      readBuffer.write(bufferData, offset, bufferData.length - offset);
     }
   }
 
@@ -203,17 +239,14 @@ public class RconConnection {
   public void close(String reason) {
     if (closed.compareAndSet(false, true)) {
       try {
-        if (readThread != null) {
+        // Closing the socket below already unblocks a read; the interrupt is for a read thread
+        // busy elsewhere. Never interrupt ourselves: the flag would break the logging that follows.
+        if (readThread != null && readThread != Thread.currentThread()) {
           readThread.interrupt();
         }
 
         if (socket != null && !socket.isClosed()) {
           socket.close();
-        }
-
-        // Remove from transport's connection map and notify callbacks
-        if (transport != null) {
-          transport.onConnectionClosed(id, reason);
         }
       } catch (Exception e) {
         // Log error but don't re-throw
@@ -222,10 +255,34 @@ public class RconConnection {
             .withParam("error_type", "close_failure")
             .withParam("message", "Error closing connection: " + e.getMessage())
             .withOptionalParam("connection_id", id)
-            .withCause(e)
+            .withOptionalParam("remote_ip", remoteIp)
+            .throttledBy(preAuthLogThrottle(), addressKey)
             .log();
+      } finally {
+        // Always release the slot and the session state, even if the socket close failed
+        if (transport != null) {
+          transport.onConnectionClosed(this, reason);
+        }
       }
     }
+  }
+
+  /** Mark the connection as logged in: the idle timeout replaces the login deadline. */
+  public void markAuthenticated() {
+    lastActivity = System.currentTimeMillis();
+    authenticated = true;
+  }
+
+  public boolean isAuthenticated() {
+    return authenticated;
+  }
+
+  /**
+   * The log budget to charge: the per-address one until the peer has logged in, none after. Lines
+   * caused by someone who knows the password are always written.
+   */
+  LogThrottle preAuthLogThrottle() {
+    return authenticated ? null : preAuthLogs;
   }
 
   /** Update last activity timestamp. */
@@ -241,6 +298,20 @@ public class RconConnection {
   /** Get connection ID. */
   public String getId() {
     return id;
+  }
+
+  /** Remote address as text, for logs. */
+  public String getRemoteIp() {
+    return remoteIp;
+  }
+
+  /** Key the per-address limits are counted under (see AuthFailureTracker.keyFor). */
+  public String getAddressKey() {
+    return addressKey;
+  }
+
+  public long getConnectedAt() {
+    return connectedAt;
   }
 
   /** Get last activity time. */

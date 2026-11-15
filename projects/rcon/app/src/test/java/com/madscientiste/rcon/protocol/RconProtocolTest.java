@@ -157,4 +157,88 @@ public class RconProtocolTest {
     RconPacket packet = new RconPacket(123, RconPacket.SERVERDATA_AUTH, hugeBody.toString());
     protocol.formatPacket(packet);
   }
+
+  @Test
+  public void testAuthResponseIds() {
+    RconPacket accepted = protocol.createAuthResponse(42, true);
+    assertEquals("An accepted login echoes the request id", 42, accepted.getId());
+    assertEquals(RconPacket.SERVERDATA_AUTH_RESPONSE, accepted.getType());
+
+    RconPacket refused = protocol.createAuthResponse(42, false);
+    assertEquals("A refused login is answered with id -1", -1, refused.getId());
+    assertEquals(RconPacket.SERVERDATA_AUTH_RESPONSE, refused.getType());
+  }
+
+  @Test
+  public void testShortResponseIsOnePacket() {
+    List<RconPacket> packets = protocol.createCommandResponses(7, "hello");
+    assertEquals(1, packets.size());
+    assertEquals("hello", packets.get(0).getBody());
+    assertEquals(7, packets.get(0).getId());
+
+    assertEquals(
+        "An empty reply is still one packet", 1, protocol.createCommandResponses(7, "").size());
+    assertEquals(1, protocol.createCommandResponses(7, null).size());
+  }
+
+  @Test
+  public void testResponseThatExactlyFillsAPacketIsNotSplit() {
+    String body = "x".repeat(4096 - RconProtocol.PACKET_OVERHEAD);
+    List<RconPacket> packets = protocol.createCommandResponses(7, body);
+    assertEquals(1, packets.size());
+    assertEquals(4096, protocol.formatPacket(packets.get(0)).length);
+  }
+
+  @Test
+  public void testLongResponseIsSplitInOrder() {
+    String body = "0123456789".repeat(1000); // 10000 bytes
+    List<RconPacket> packets = protocol.createCommandResponses(7, body);
+
+    assertEquals(3, packets.size());
+    StringBuilder joined = new StringBuilder();
+    for (RconPacket packet : packets) {
+      assertEquals(7, packet.getId());
+      assertEquals(RconPacket.SERVERDATA_RESPONSE_VALUE, packet.getType());
+      assertTrue(
+          "Every part fits in a standard packet", protocol.formatPacket(packet).length <= 4096);
+      joined.append(packet.getBody());
+    }
+    assertEquals(body, joined.toString());
+  }
+
+  @Test
+  public void testSplitNeverCutsAUtf8Character() {
+    // 2-, 3- and 4-byte characters, shifted by one byte so the cut lands inside one
+    String body = "a" + "é€😀".repeat(2000);
+    List<RconPacket> packets = protocol.createCommandResponses(7, body);
+
+    assertTrue(packets.size() > 1);
+    StringBuilder joined = new StringBuilder();
+    for (RconPacket packet : packets) {
+      assertFalse("No replacement character", packet.getBody().contains("�"));
+      assertTrue(protocol.formatPacket(packet).length <= 4096);
+      joined.append(packet.getBody());
+    }
+    assertEquals(body, joined.toString());
+  }
+
+  @Test
+  public void testConfiguredFrameSizeLimitsWhatIsAccepted() {
+    RconProtocol small = new RconProtocol(128);
+    byte[] ok = new RconPacket(1, RconPacket.SERVERDATA_EXECCOMMAND, "x".repeat(100)).toBytes();
+    byte[] tooBig = new RconPacket(1, RconPacket.SERVERDATA_EXECCOMMAND, "x".repeat(200)).toBytes();
+
+    assertTrue(small.parseBytes("c", ok).isSuccess());
+    assertFalse(small.parseBytes("c", tooBig).isSuccess());
+
+    RconProtocol large = new RconProtocol(8192);
+    byte[] big = new RconPacket(1, RconPacket.SERVERDATA_EXECCOMMAND, "x".repeat(6000)).toBytes();
+    assertTrue(large.parseBytes("c", big).isSuccess());
+    assertFalse("The default limit refuses it", protocol.parseBytes("c", big).isSuccess());
+
+    assertEquals(
+        "Replies stay within a standard packet whatever the inbound limit",
+        2,
+        large.createCommandResponses(1, "x".repeat(6000)).size());
+  }
 }

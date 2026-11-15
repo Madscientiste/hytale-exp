@@ -17,6 +17,11 @@ public class StructuredLogBuilder {
   private final Map<String, Object> params = new HashMap<>();
   private Throwable cause;
   private Level overrideLevel;
+  private LogThrottle throttle;
+  private String throttleKey;
+
+  /** Longest parameter value written to the log; the rest is cut and counted. */
+  static final int MAX_VALUE_LENGTH = 512;
 
   StructuredLogBuilder(@Nonnull HytaleLogger logger, @Nonnull LogEvent event) {
     this.logger = logger;
@@ -79,11 +84,37 @@ public class StructuredLogBuilder {
     return this;
   }
 
+  /**
+   * Count this line against a per-key budget (see {@link LogThrottle}). Use it for every line a
+   * peer can cause before it has logged in. A null throttle or key means no limit.
+   *
+   * @param throttle Budget to draw from, or null
+   * @param key Usually the remote address, or null
+   * @return this builder for chaining
+   */
+  @Nonnull
+  public StructuredLogBuilder throttledBy(LogThrottle throttle, String key) {
+    this.throttle = throttle;
+    this.throttleKey = key;
+    return this;
+  }
+
   /** Execute the log statement. Validates required parameters and formats the message. */
   public void log() {
     validateRequiredParams();
 
+    long suppressed = 0;
+    if (throttle != null && throttleKey != null) {
+      suppressed = throttle.tryAcquire(throttleKey);
+      if (suppressed < 0) {
+        return;
+      }
+    }
+
     String message = formatMessage();
+    if (suppressed > 0) {
+      message += " (" + suppressed + " earlier lines from this address not logged)";
+    }
     Level level = overrideLevel != null ? overrideLevel : event.getDefaultLevel();
 
     HytaleLogger.Api api = logger.at(level);
@@ -129,14 +160,47 @@ public class StructuredLogBuilder {
   @Nonnull
   private String formatValue(@Nonnull Object value) {
     if (value instanceof String) {
-      return (String) value;
+      return neutralize((String) value);
     } else if (value instanceof Number) {
       return value.toString();
     } else if (value instanceof Boolean) {
       return value.toString();
     } else {
-      return String.valueOf(value);
+      return neutralize(String.valueOf(value));
     }
+  }
+
+  /**
+   * Make a value safe to write on one log line. Much of what is logged comes from the network
+   * (command text, error messages quoting packet content), so control characters are written as
+   * visible escapes: a peer cannot start a forged log line or send terminal escape codes. Long
+   * values are cut.
+   */
+  @Nonnull
+  static String neutralize(@Nonnull String value) {
+    int length = Math.min(value.length(), MAX_VALUE_LENGTH);
+    StringBuilder sb = new StringBuilder(length + 16);
+
+    for (int i = 0; i < length; i++) {
+      char c = value.charAt(i);
+      switch (c) {
+        case '\n' -> sb.append("\\n");
+        case '\r' -> sb.append("\\r");
+        case '\t' -> sb.append("\\t");
+        default -> {
+          if (Character.isISOControl(c) || c == '\u2028' || c == '\u2029') {
+            sb.append(String.format("\\u%04x", (int) c));
+          } else {
+            sb.append(c);
+          }
+        }
+      }
+    }
+
+    if (value.length() > MAX_VALUE_LENGTH) {
+      sb.append("...(").append(value.length() - MAX_VALUE_LENGTH).append(" more chars)");
+    }
+    return sb.toString();
   }
 
   /**
