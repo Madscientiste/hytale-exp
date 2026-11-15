@@ -83,10 +83,13 @@ public class RconBootstrapTest {
   @Test
   public void anUnreadableConfigFolderKeepsRconOffAndWritesNothing() throws Exception {
     Files.createDirectories(dir);
-    Assume.assumeTrue(dir.getFileSystem().supportedFileAttributeViews().contains("posix"));
+    Assume.assumeTrue(
+        "SKIPPED: this test needs POSIX file permissions",
+        dir.getFileSystem().supportedFileAttributeViews().contains("posix"));
     Files.writeString(file, "{ \"port\": 25575 }");
     Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("---------"));
-    Assume.assumeFalse("Running as a user that ignores permissions", Files.isReadable(file));
+    Assume.assumeFalse(
+        "SKIPPED: running as a user that ignores file permissions (root)", Files.isReadable(file));
 
     RconServer server = RconBootstrap.prepare(file, logger);
 

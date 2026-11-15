@@ -48,6 +48,7 @@ public class RconSecurityRegressionTest {
 
   private RconServer server;
   private RconServer secondServer;
+  private String secondServerIp = SERVER_IP;
   private LogCapture logs;
 
   @Before
@@ -77,7 +78,7 @@ public class RconSecurityRegressionTest {
     String outside = TestAddresses.outside();
     startSecondServer(
         RconConfig.builder()
-            .host("0.0.0.0")
+            .host(outside)
             .port(SECOND_PORT)
             .passwordHash(AuthenticationService.hashPassword(PASSWORD)));
 
@@ -297,7 +298,7 @@ public class RconSecurityRegressionTest {
     String outside = TestAddresses.outside();
     startSecondServer(
         RconConfig.builder()
-            .host("0.0.0.0")
+            .host(outside)
             .port(SECOND_PORT)
             .passwordHash(AuthenticationService.hashPassword(PASSWORD)));
 
@@ -336,7 +337,7 @@ public class RconSecurityRegressionTest {
     String outside = TestAddresses.outside();
     startSecondServer(
         RconConfig.builder()
-            .host("0.0.0.0")
+            .host(outside)
             .port(SECOND_PORT)
             .maxConnections(3)
             .maxConnectionsPerIp(3)
@@ -416,6 +417,112 @@ public class RconSecurityRegressionTest {
   }
 
   /**
+   * Review finding: a logged-in client that stops reading made the server's write block for ever,
+   * so its slot outlived the idle timeout. A write that does not finish within the idle timeout (2
+   * s here) now ends the connection.
+   */
+  @Test
+  public void aClientThatStopsReadingLosesItsSlot() throws Exception {
+    startSecondServer(
+        RconConfig.builder()
+            .port(SECOND_PORT)
+            .maxFrameSize(1048576)
+            .readTimeoutMs(2000)
+            .passwordHash(AuthenticationService.hashPassword(PASSWORD)));
+
+    Socket socket = new Socket();
+    try {
+      socket.setReceiveBufferSize(4096); // a small window: the server's writes block soon
+      socket.connect(new InetSocketAddress(SERVER_IP, SECOND_PORT), 3000);
+      socket.setSoTimeout(5000);
+      socket.getOutputStream().write(new RconPacket(1, 3, PASSWORD).toBytes());
+      assertEquals("1", RconTestHelpers.readResponse(socket).getBody());
+
+      // Ask for far more output than the socket buffers hold, and never read any of it
+      byte[] command = new RconPacket(2, 2, "echo " + "x".repeat(1_000_000)).toBytes();
+      Thread writer =
+          new Thread(
+              () -> {
+                try {
+                  for (int i = 0; i < 16; i++) {
+                    socket.getOutputStream().write(command);
+                  }
+                } catch (IOException e) {
+                  // The server gave up on us: expected
+                }
+              });
+      writer.setDaemon(true);
+      writer.start();
+
+      long end = System.currentTimeMillis() + 12_000;
+      while (System.currentTimeMillis() < end && secondServer.getStats().connectionCount > 0) {
+        Thread.sleep(100);
+      }
+      assertEquals(
+          "The stuck connection must be closed and its slot freed",
+          0,
+          secondServer.getStats().connectionCount);
+    } finally {
+      socket.close();
+    }
+  }
+
+  /**
+   * Review finding: nothing limited how many password checks ran at once over all addresses, and
+   * each costs real CPU time. Only 2 run at a time now; a login that arrives while both are busy is
+   * refused without a check.
+   */
+  @Test
+  public void onlyTwoPasswordChecksRunAtTheSameTime() throws Exception {
+    logs.assumeAvailable();
+    logs.clear();
+
+    List<Socket> sockets = new ArrayList<>();
+    try {
+      for (int i = 0; i < 4; i++) {
+        sockets.add(connectFrom(SERVER_IP, PORT));
+      }
+      // Four guesses within the same moment: a check takes far longer than sending them
+      for (Socket socket : sockets) {
+        socket.getOutputStream().write(new RconPacket(1, 3, "guess").toBytes());
+      }
+      for (Socket socket : sockets) {
+        assertEquals("Every login is refused", -1, RconTestHelpers.readResponse(socket).getId());
+      }
+    } finally {
+      for (Socket socket : sockets) {
+        socket.close();
+      }
+    }
+
+    long checked = logs.count(m -> m.contains("failure_reason=invalid_password"));
+    long busy = logs.count(m -> m.contains("failure_reason=server_busy"));
+    assertEquals("Each of the 4 logins is logged", 4, checked + busy);
+    assertTrue("At most 2 passwords were checked, got " + checked, checked <= 2);
+    assertTrue("The others were refused unchecked", busy >= 2);
+  }
+
+  /** The same limits on IPv6 loopback, which counts as this machine like 127.0.0.0/8 does. */
+  @Test
+  public void ipv6LoopbackIsServedAndLimitedLikeTheRestOfLoopback() throws Exception {
+    TestAddresses.assumeIpv6Loopback();
+    startSecondServer(
+        RconConfig.builder()
+            .host(TestAddresses.LOOPBACK_V6)
+            .port(SECOND_PORT)
+            .passwordHash(AuthenticationService.hashPassword(PASSWORD)));
+
+    assertTrue(sessionWorks(TestAddresses.LOOPBACK_V6, SECOND_PORT));
+    for (int i = 0; i < 5; i++) {
+      RconPacket reply = login(TestAddresses.LOOPBACK_V6, SECOND_PORT, i, "wrong-" + i);
+      assertNotNull(reply);
+      assertEquals(-1, reply.getId());
+    }
+    assertFalse(
+        "5 wrong passwords from ::1 ban it", sessionWorks(TestAddresses.LOOPBACK_V6, SECOND_PORT));
+  }
+
+  /**
    * Review finding: with maxFrameSize at its maximum (1 MB) a peer that had not logged in could
    * make the server buffer a megabyte per connection and burn CPU on it. Before login a packet is
    * now limited to the default size, whatever the config says.
@@ -456,18 +563,16 @@ public class RconSecurityRegressionTest {
   @Test
   public void finding6_bindingToANonLoopbackAddressWarns() throws Exception {
     logs.assumeAvailable();
-    RconConfig config =
+    String outside = TestAddresses.outside();
+    startSecondServer(
         RconConfig.builder()
-            .host("0.0.0.0")
+            .host(outside)
             .port(SECOND_PORT)
-            .passwordHash(AuthenticationService.hashPassword(PASSWORD))
-            .build();
-    secondServer = new RconServer(config);
-    secondServer.start();
+            .passwordHash(AuthenticationService.hashPassword(PASSWORD)));
 
     assertTrue(
         "Starting on a non-loopback address must warn that RCON is not encrypted",
-        logs.await(m -> m.contains("0.0.0.0") && m.contains("no encryption"), 2000));
+        logs.await(m -> m.contains(outside) && m.contains("no encryption"), 2000));
   }
 
   @Test
@@ -485,7 +590,9 @@ public class RconSecurityRegressionTest {
   public void finding10_savedConfigIsReadableByItsOwnerOnly() throws Exception {
     Path dir = Files.createTempDirectory("rcon-config");
     Path file = dir.resolve("com.madscientiste.rcon.json");
-    Assume.assumeTrue(file.getFileSystem().supportedFileAttributeViews().contains("posix"));
+    Assume.assumeTrue(
+        "SKIPPED: this test needs POSIX file permissions",
+        file.getFileSystem().supportedFileAttributeViews().contains("posix"));
 
     RconConfig config =
         RconConfig.builder().passwordHash(AuthenticationService.hashPassword(PASSWORD)).build();
@@ -744,20 +851,25 @@ public class RconSecurityRegressionTest {
   // Helpers
   // ---------------------------------------------------------------------------
 
-  /** Connect to a server on this machine from a chosen source address. */
-  private static Socket connectFrom(String sourceIp, int port) throws IOException {
-    return TestAddresses.connectFrom(sourceIp, port);
+  /**
+   * Connect to one of the test servers from a chosen source address of this machine. The first
+   * server listens on 127.0.0.1; the second on whatever single address its test gave it.
+   */
+  private Socket connectFrom(String sourceIp, int port) throws IOException {
+    return TestAddresses.connect(sourceIp, port == SECOND_PORT ? secondServerIp : SERVER_IP, port);
   }
 
-  /** Start a second server; tearDown stops it. */
+  /** Start a second server on the one address in its config; tearDown stops it. */
   private void startSecondServer(RconConfig.Builder config) throws Exception {
-    secondServer = new RconServer(config.build());
+    RconConfig built = config.build();
+    secondServerIp = built.getHost();
+    secondServer = new RconServer(built);
     secondServer.start();
     Thread.sleep(100);
   }
 
   /** Send one login. Returns the reply, or null if the server closed without answering. */
-  private static RconPacket login(String sourceIp, int port, int id, String password) {
+  private RconPacket login(String sourceIp, int port, int id, String password) {
     try (Socket socket = connectFrom(sourceIp, port)) {
       socket.getOutputStream().write(new RconPacket(id, 3, password).toBytes());
       return RconTestHelpers.readResponse(socket);
@@ -767,7 +879,7 @@ public class RconSecurityRegressionTest {
   }
 
   /** True if the right password logs in and a command is answered. */
-  private static boolean sessionWorks(String sourceIp, int port) {
+  private boolean sessionWorks(String sourceIp, int port) {
     try (Socket socket = connectFrom(sourceIp, port)) {
       socket.getOutputStream().write(new RconPacket(1, 3, PASSWORD).toBytes());
       RconPacket auth = RconTestHelpers.readResponse(socket);
@@ -782,7 +894,7 @@ public class RconSecurityRegressionTest {
   }
 
   /** 292 empty command packets in one write, with no login: the pentest's flood payload. */
-  private static void sendBadPacketBurst(String sourceIp) throws IOException {
+  private void sendBadPacketBurst(String sourceIp) throws IOException {
     ByteArrayOutputStream burst = new ByteArrayOutputStream();
     for (int i = 0; i < 292; i++) {
       burst.write(new RconPacket(i, 2, "").toBytes());

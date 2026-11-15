@@ -148,12 +148,16 @@ public class ConfigLoaderTest {
    */
   @Test
   public void aConfigInAnUnreadableFolderIsNotTakenForAMissingOne() throws Exception {
-    Assume.assumeTrue(file.getFileSystem().supportedFileAttributeViews().contains("posix"));
+    Assume.assumeTrue(
+        "SKIPPED: this test needs POSIX file permissions",
+        file.getFileSystem().supportedFileAttributeViews().contains("posix"));
     Files.writeString(file, "{ \"port\": 25575 }");
     Path folder = file.getParent();
     Files.setPosixFilePermissions(folder, PosixFilePermissions.fromString("---------"));
     try {
-      Assume.assumeFalse("Running as a user that ignores permissions", Files.isReadable(file));
+      Assume.assumeFalse(
+          "SKIPPED: running as a user that ignores file permissions (root)",
+          Files.isReadable(file));
       try {
         RconConfig loaded = loader.load();
         fail("Must not fall back to defaults, but gave " + loaded);
@@ -238,7 +242,9 @@ public class ConfigLoaderTest {
 
   @Test
   public void aWorldReadableFileIsTightened() throws Exception {
-    Assume.assumeTrue(file.getFileSystem().supportedFileAttributeViews().contains("posix"));
+    Assume.assumeTrue(
+        "SKIPPED: this test needs POSIX file permissions",
+        file.getFileSystem().supportedFileAttributeViews().contains("posix"));
     Files.writeString(file, "{ \"port\": 25575 }");
     Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-r--r--"));
 
@@ -249,7 +255,9 @@ public class ConfigLoaderTest {
 
   @Test
   public void savingOverAWorldReadableFileLeavesItPrivate() throws Exception {
-    Assume.assumeTrue(file.getFileSystem().supportedFileAttributeViews().contains("posix"));
+    Assume.assumeTrue(
+        "SKIPPED: this test needs POSIX file permissions",
+        file.getFileSystem().supportedFileAttributeViews().contains("posix"));
     Files.writeString(file, "{ \"port\": 25575 }");
     Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-r--r--"));
 

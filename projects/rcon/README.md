@@ -26,7 +26,8 @@ If `host` is not a loopback address, the plugin prints a warning at every start.
 | Threat | Protection |
 | --- | --- |
 | Password guessing | 5 wrong passwords from one address within 10 minutes ban that address for 5 minutes. Every failed login is logged with the address, before the reply is sent, so hanging up early does not hide it. |
-| Holding all connection slots | A new connection has 5 seconds to log in, however slowly it sends bytes. One address may hold 4 connections at most. The last free slot is kept for this machine (see below). |
+| Burning CPU with password checks | Only 2 passwords are checked at the same time, over all addresses. A login that arrives while both are busy is refused without a check, and counts as a failed login. |
+| Holding all connection slots | A new connection has 5 seconds to log in, however slowly it sends bytes. One address may hold 4 connections at most. The last free slot is kept for this machine (see below). A logged-in client that stops reading its replies is closed after the idle timeout. |
 | Filling the disk with log lines | An address that has not logged in can cause 20 log lines per 10 seconds. The rest are counted and the count is logged. Bad input and dropped connections never log a stack trace. |
 | Filling memory before login | Before login a packet may be 4096 bytes at most, whatever `maxFrameSize` says. |
 | Forged log lines | Control characters in logged values (command text included) are written as visible escapes such as `\n` and `\u001b`. |
@@ -57,6 +58,11 @@ Of `maxConnections`, the last free slot can only be taken by loopback. With the 
 addresses can hold 9 of the 10 slots. So even when several outside addresses fill the server, a
 local client still gets in: for example the Docker health check, which runs `rcon-cli` inside the
 container. (With `maxConnections` set to 1 nothing is kept back.)
+
+This does not protect against a program on the machine itself. Loopback is one address with 4
+connections at most, so a local program that keeps 4 idle loopback connections open blocks the
+health check and every other local client. It sends no wrong password, so nothing gets banned.
+Each of its connections is closed after 5 seconds, but it can open new ones.
 
 ### Several admins behind one address
 
@@ -91,7 +97,7 @@ the file is fixed, and the server log says which key is wrong.
 | `maxConnections` | `10` | Connections in total. The last one is kept for this machine. |
 | `maxConnectionsPerIp` | `4` | Connections from one address. |
 | `maxFrameSize` | `4096` | Largest packet a logged-in client may send, in bytes (64 to 1048576). Before login the limit is 4096 at most. |
-| `readTimeoutMs` | `30000` | A logged-in connection is closed after this long without a complete packet. |
+| `readTimeoutMs` | `30000` | The idle timeout. A logged-in connection is closed after this long without a complete packet, or when one write to it takes this long. |
 | `connectionTimeoutMs` | `5000` | How often the listener wakes up to check for shutdown. |
 | `authTimeoutMs` | `5000` | Time a new connection has to log in. |
 | `authMaxFailures` | `5` | Failed logins from one address that trigger a ban. |
@@ -117,6 +123,9 @@ Off by default. To turn it on, leave `passwordHash` out and write:
 - The list takes single addresses and CIDR ranges, IPv4 and IPv6. You can widen it to anything,
   `0.0.0.0/0` included. Whoever is on the list gets the full server console, so think twice.
 - Logins from any other address are refused and count as failed logins: 5 of them ban the address.
+- Careful with IPv6 addresses on the list. IPv6 is counted per /64 network, so a neighbour in the
+  same /64 who is not on the list can send 5 refused logins and get the whole /64 banned, your
+  allowed address included, for 5 minutes at a time.
 - The plugin prints a loud warning at every start, naming the allowed ranges.
 - If `passwordHash` is set, the password is required and `allowNoPassword` does nothing.
 

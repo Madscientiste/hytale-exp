@@ -89,6 +89,37 @@ public class AddressRangeTest {
     assertEquals("127.0.0.0/8", AddressRange.parse(" 127.0.0.0/8 ").toString());
   }
 
+  /** Review finding: these loose forms were accepted. An allow list must have one reading only. */
+  @Test
+  public void looseFormsAreRefused() {
+    String[] loose = {
+      "1.2.3.4/00", // leading zeros in the mask
+      "1.2.3.4/08",
+      "::1/064",
+      "fe80::1%1", // zone
+      "fe80::1%eth0",
+      "[::1]", // brackets
+      "[::1]/128",
+      "010.0.0.1", // leading zero in an octet (octal to some tools)
+      "10.0.0.01",
+      "10.0.0.1/+8",
+    };
+    for (String text : loose) {
+      try {
+        AddressRange.parse(text);
+        fail("Should be refused: \"" + text + "\"");
+      } catch (IllegalArgumentException expected) {
+        // Refused
+      }
+    }
+
+    // The plain forms next to them still work
+    assertEquals("1.2.3.4/0", AddressRange.parse("1.2.3.4/0").toString());
+    assertEquals("10.0.0.1", AddressRange.parse("10.0.0.1").toString());
+    assertEquals("fe80::1", AddressRange.parse("fe80::1").toString());
+    assertEquals("::1/128", AddressRange.parse("::1/128").toString());
+  }
+
   @Test
   public void anythingElseIsRefusedWithoutANameLookup() {
     String[] bad = {

@@ -12,6 +12,11 @@ import javax.annotation.Nonnull;
  */
 public final class AddressRange {
 
+  /** A number of up to three digits with no leading zero: 0, 7, 24, 128. */
+  private static final String NO_LEADING_ZERO = "(0|[1-9][0-9]{0,2})";
+
+  private static final String IPV4_OCTET = NO_LEADING_ZERO;
+
   private final String text;
   private final byte[] network;
   private final int prefixLength;
@@ -35,9 +40,15 @@ public final class AddressRange {
 
     InetAddress address;
     try {
-      // IPv4 must be written in full: the parser would also take short forms such as "10"
-      if (!addressPart.contains(":") && !addressPart.matches("\\d{1,3}(\\.\\d{1,3}){3}")) {
-        throw new IllegalArgumentException("not a full IPv4 address");
+      // Only the plain forms. The JDK parser alone would also take short IPv4 ("10"), octets
+      // with leading zeros ("010.0.0.1", octal to some tools), brackets ("[::1]") and zones
+      // ("fe80::1%1"); an allow list must mean one thing to everyone who reads it.
+      boolean plain =
+          addressPart.contains(":")
+              ? addressPart.matches("[0-9A-Fa-f:.]+")
+              : addressPart.matches(IPV4_OCTET + "(\\." + IPV4_OCTET + "){3}");
+      if (!plain) {
+        throw new IllegalArgumentException("not a plain IP address");
       }
       address = InetAddress.ofLiteral(addressPart);
     } catch (IllegalArgumentException e) {
@@ -53,7 +64,8 @@ public final class AddressRange {
     int prefix = maxPrefix;
     if (slash >= 0) {
       String prefixPart = trimmed.substring(slash + 1);
-      if (!prefixPart.matches("\\d{1,3}") || Integer.parseInt(prefixPart) > maxPrefix) {
+      // No leading zeros here either ("/00", "/08")
+      if (!prefixPart.matches(NO_LEADING_ZERO) || Integer.parseInt(prefixPart) > maxPrefix) {
         throw new IllegalArgumentException(
             "\"" + text + "\": the part after '/' must be a number from 0 to " + maxPrefix);
       }

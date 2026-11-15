@@ -14,6 +14,7 @@ import java.net.InetAddress;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.util.Arrays;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -253,11 +254,20 @@ public class RconConnection {
       throw new IOException("Connection is closed");
     }
 
-    // One frame at a time on the wire
-    synchronized (output) {
-      output.write(data);
-      output.flush();
-      updateActivity();
+    // A blocking socket write has no timeout of its own. If the peer stops reading, the watchdog
+    // closes the socket after the idle timeout, which makes the write below fail.
+    ScheduledFuture<?> deadline = transport != null ? transport.startWriteDeadline(this) : null;
+    try {
+      // One frame at a time on the wire
+      synchronized (output) {
+        output.write(data);
+        output.flush();
+        updateActivity();
+      }
+    } finally {
+      if (deadline != null) {
+        deadline.cancel(false);
+      }
     }
   }
 

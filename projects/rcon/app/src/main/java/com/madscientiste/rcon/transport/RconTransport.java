@@ -12,6 +12,10 @@ import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -29,6 +33,9 @@ public class RconTransport {
   private final AtomicBoolean running = new AtomicBoolean(false);
 
   private Thread acceptThread;
+
+  // Closes a connection whose write does not finish in time (a peer that stopped reading)
+  private volatile ScheduledThreadPoolExecutor writeWatchdog;
 
   /**
    * @param authFailures Shared with the application layer: a banned address is refused on accept
@@ -52,6 +59,17 @@ public class RconTransport {
 
       serverSocket.setSoTimeout(config.getConnectionTimeoutMs());
       serverSocket.setReuseAddress(true);
+
+      ScheduledThreadPoolExecutor watchdog =
+          new ScheduledThreadPoolExecutor(
+              1,
+              task -> {
+                Thread thread = new Thread(task, "RconWriteWatchdog");
+                thread.setDaemon(true);
+                return thread;
+              });
+      watchdog.setRemoveOnCancelPolicy(true);
+      writeWatchdog = watchdog;
 
       acceptThread = new Thread(this::acceptLoop, "RconAccept");
       acceptThread.setDaemon(true);
@@ -79,6 +97,11 @@ public class RconTransport {
 
         connections.forEach((id, conn) -> conn.close("Server shutdown"));
         connections.clear();
+
+        ScheduledThreadPoolExecutor watchdog = writeWatchdog;
+        if (watchdog != null) {
+          watchdog.shutdownNow();
+        }
 
         if (acceptThread != null) {
           acceptThread.interrupt();
@@ -115,6 +138,27 @@ public class RconTransport {
     RconConnection connection = connections.get(connectionId);
     if (connection != null) {
       connection.close(reason);
+    }
+  }
+
+  /**
+   * Close the connection if it is still writing after the idle timeout. A write to a peer that has
+   * stopped reading blocks for ever, and would hold the slot long past every other deadline.
+   *
+   * @return a handle to cancel once the write is done, or null when the server is stopping
+   */
+  ScheduledFuture<?> startWriteDeadline(RconConnection connection) {
+    ScheduledThreadPoolExecutor watchdog = writeWatchdog;
+    if (watchdog == null) {
+      return null;
+    }
+    try {
+      return watchdog.schedule(
+          () -> connection.close("Write timeout"),
+          config.getReadTimeoutMs(),
+          TimeUnit.MILLISECONDS);
+    } catch (RejectedExecutionException e) {
+      return null; // Shut down: stop() closes every connection anyway
     }
   }
 

@@ -25,7 +25,10 @@ public final class LogCapture implements AutoCloseable {
    * older server generation). Tests that assert on the log call this first.
    */
   public void assumeAvailable() {
-    Assume.assumeTrue("This server jar does not expose its log records", available);
+    Assume.assumeTrue(
+        "SKIPPED: this test reads the server log, and this server jar does not expose its log"
+            + " records",
+        available);
   }
 
   /** False when the server jar cannot be listened to; log assertions must then be left out. */

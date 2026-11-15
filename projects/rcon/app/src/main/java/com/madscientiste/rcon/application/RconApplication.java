@@ -16,6 +16,7 @@ import com.madscientiste.rcon.transport.TransportCallbacks;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 
@@ -49,6 +50,11 @@ public class RconApplication implements TransportCallbacks {
   private final RconConfig config;
 
   private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<>();
+
+  /** Password checks that may run at the same time, over all addresses together. */
+  static final int MAX_CONCURRENT_PASSWORD_CHECKS = 2;
+
+  private final Semaphore passwordChecks = new Semaphore(MAX_CONCURRENT_PASSWORD_CHECKS);
 
   public RconApplication(
       RconTransport transport,
@@ -203,7 +209,9 @@ public class RconApplication implements TransportCallbacks {
   private void handleAuthPacket(String connectionId, RconPacket packet, Session session) {
     int responseId = packet.getId();
     String providedPassword = packet.getBody();
-    boolean noPasswordMode = !config.requiresPassword();
+    // Only the owner's explicit opt-in turns the password check off. A missing hash alone never
+    // lets anyone in, even if this class is used without RconServer's start-up check.
+    boolean noPasswordMode = config.isNoPasswordMode();
     boolean authSuccess = false;
     boolean counted = false;
     boolean banned = false;
@@ -212,7 +220,6 @@ public class RconApplication implements TransportCallbacks {
     // Every refused login is counted against the address, and the count is reserved before the
     // check so that parallel connections cannot get extra tries.
     if (noPasswordMode && config.mayLogInWithoutPassword(session.remoteAddress)) {
-      // The owner opted in to no-password logins from this address (RconServer checks the opt-in)
       authSuccess = true;
       failureReason = null;
     } else if (!authFailures.tryBeginAttempt(session.addressKey)) {
@@ -220,11 +227,24 @@ public class RconApplication implements TransportCallbacks {
       failureReason = "too_many_failures";
     } else {
       counted = true;
-      failureReason = noPasswordMode ? "address_not_allowed" : "invalid_password";
       try {
-        authSuccess =
-            !noPasswordMode
-                && AuthenticationService.verifyPassword(providedPassword, config.getPasswordHash());
+        if (noPasswordMode) {
+          failureReason = "address_not_allowed";
+        } else if (!config.requiresPassword()) {
+          failureReason = "no_password_configured";
+        } else if (!passwordChecks.tryAcquire()) {
+          // A check costs real CPU time, and the per-address limits do not bound how many run
+          // at once across many addresses. Over the cap the login is refused unchecked.
+          failureReason = "server_busy";
+        } else {
+          failureReason = "invalid_password";
+          try {
+            authSuccess =
+                AuthenticationService.verifyPassword(providedPassword, config.getPasswordHash());
+          } finally {
+            passwordChecks.release();
+          }
+        }
       } finally {
         banned = authFailures.endAttempt(session.addressKey, authSuccess);
       }
