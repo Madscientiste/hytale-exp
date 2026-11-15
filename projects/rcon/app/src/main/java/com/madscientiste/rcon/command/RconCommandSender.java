@@ -12,6 +12,8 @@ import javax.annotation.Nonnull;
  */
 public class RconCommandSender implements CommandSender {
 
+  private static final String SENDER_NAME = "RCON";
+
   private final UUID uuid;
   private final ConcurrentLinkedQueue<String> capturedMessages;
 
@@ -33,7 +35,17 @@ public class RconCommandSender implements CommandSender {
   @Override
   @Nonnull
   public String getUsername() {
-    return "RCON";
+    return SENDER_NAME;
+  }
+
+  /**
+   * Abstract in CommandSender before Hytale 0.7.7 (January 2026 builds), removed in 0.7.7. Kept
+   * without {@code @Override} so the same jar compiles against 0.7.7 and still runs on older
+   * servers.
+   */
+  @Nonnull
+  public String getDisplayName() {
+    return SENDER_NAME;
   }
 
   @Override
